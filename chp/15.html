@@ -1,0 +1,920 @@
+<!DOCTYPE html>
+
+<html>
+  <head>
+    <meta charset="utf-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1.0" /><meta name="generator" content="Docutils 0.17.1: http://docutils.sourceforge.net/" />
+
+    <title>第 15 章：使用 Monad 编程 &#8212; Real World Haskell 中文版</title>
+    <link rel="stylesheet" type="text/css" href="../_static/pygments.css" />
+    <link rel="stylesheet" type="text/css" href="../_static/haiku.css" />
+    <link rel="stylesheet" href="../_static/print.css" type="text/css" />
+    <script data-url_root="../" id="documentation_options" src="../_static/documentation_options.js"></script>
+    <script src="../_static/jquery.js"></script>
+    <script src="../_static/underscore.js"></script>
+    <script src="../_static/doctools.js"></script>
+    <script src="../_static/theme_extras.js"></script>
+    <link rel="index" title="Index" href="../genindex.html" />
+    <link rel="search" title="Search" href="../search.html" />
+    <link rel="next" title="第 16 章：使用Parsec" href="16.html" />
+    <link rel="prev" title="第 14 章：Monads" href="14.html" /> 
+  </head><body>
+      <div class="header"><h1 class="heading"><a href="../index.html">
+          <span>Real World Haskell 中文版</span></a></h1>
+      </div>
+      <div class="topnav">
+      
+        <p>
+        «&#160;&#160;<a href="14.html">第 14 章：Monads</a>
+        &#160;&#160;::&#160;&#160;
+        <a class="uplink" href="../index.html">Contents</a>
+        &#160;&#160;::&#160;&#160;
+        <a href="16.html">第 16 章：使用Parsec</a>&#160;&#160;»
+        </p>
+
+      </div>
+      <div class="content">
+        
+        
+  <section id="monad">
+<h1>第 15 章：使用 Monad 编程<a class="headerlink" href="#monad" title="Permalink to this headline">¶</a></h1>
+<section id="golfing-practice-association-lists">
+<span id="id1"></span><h2>高尔夫训练：关联列表<a class="headerlink" href="#golfing-practice-association-lists" title="Permalink to this headline">¶</a></h2>
+<p>Web客户端和服务器通常通过简单的文本键值对列表来传输消息，例如：</p>
+<div class="highlight-haskell notranslate"><div class="highlight"><pre><span></span><span class="nf">name</span><span class="ow">=</span><span class="kt">Attila</span><span class="o">+%</span><span class="mi">42</span><span class="kt">The</span><span class="o">+</span><span class="kt">Hun</span><span class="o">%</span><span class="mi">42</span><span class="o">&amp;</span><span class="n">occupation</span><span class="ow">=</span><span class="kt">Khan</span>
+</pre></div>
+</div>
+<p>这种编码方式被称作 <code class="docutils literal notranslate"><span class="pre">application/x-www-form-urlencoded</span></code>，这种方式非常容易理解：每个键值对通过 <code class="docutils literal notranslate"><span class="pre">&amp;</span></code> 划分。在一个键值对中，键由一系列 URL 编码字符构成，键后紧跟着 <code class="docutils literal notranslate"><span class="pre">=</span></code> 和值（如果存在的话）。</p>
+<p>很明显我们可以用一个 <code class="docutils literal notranslate"><span class="pre">String</span></code> 来表示键，但 HTTP 没有明确指出一个键是否必须有对应的值。我们可以将值用 <code class="docutils literal notranslate"><span class="pre">Maybe</span> <span class="pre">String</span></code> 表示以捕获歧义，当我们使用 <code class="docutils literal notranslate"><span class="pre">Nothing</span></code> 时，值不存在，当我们用 <code class="docutils literal notranslate"><span class="pre">Just</span></code> 包装一个 <code class="docutils literal notranslate"><span class="pre">String</span></code> 时，值存在。使用 <code class="docutils literal notranslate"><span class="pre">Maybe</span></code> 允许我们区分“值不存在”和“空值”。[译注： <code class="docutils literal notranslate"><span class="pre">application/x-www-form-urlencoded</span></code> 实际是在 HTML 的 Forms 部分定义的，而非原著中的 HTML]</p>
+<p>Haskell程序员使用 <a class="reference internal" href="13.html#association-lists"><span class="std std-ref">关联列表</span></a> 表示类型 <code class="docutils literal notranslate"><span class="pre">[(a,</span> <span class="pre">b)]</span></code>，你可以把列表中的每个元素理解为一个键和值的关联。关联列表的名称起源于 Lisp 社区，通常缩写为列表，因此我们可以将上述字符串表示为以下的 Haskell 值。</p>
+<div class="highlight-haskell notranslate"><div class="highlight"><pre><span></span><span class="c1">-- file: ch15/MovieReview.hs</span>
+<span class="p">[(</span><span class="s">&quot;name&quot;</span><span class="p">,</span>       <span class="kt">Just</span> <span class="s">&quot;Attila </span><span class="se">\&quot;</span><span class="s">The Hun</span><span class="se">\&quot;</span><span class="s">&quot;</span><span class="p">),</span>
+ <span class="p">(</span><span class="s">&quot;occupation&quot;</span><span class="p">,</span> <span class="kt">Just</span> <span class="s">&quot;Khan&quot;</span><span class="p">)]</span>
+</pre></div>
+</div>
+<p>在 <span class="xref std std-ref">parsing-an-url-encoded-query-string</span> 中，我们将解析一个 <code class="docutils literal notranslate"><span class="pre">application/x-www-form-urlencoded</span></code> 编码的字符串，并使用形如 <code class="docutils literal notranslate"><span class="pre">[(String,</span> <span class="pre">Maybe</span> <span class="pre">String)]</span></code> 的关联列表表示结果。假设我们想使用这些列表中的一个来填充一个数据结构。</p>
+<div class="highlight-haskell notranslate"><div class="highlight"><pre><span></span><span class="c1">-- file: ch15/MovieReview.hs</span>
+<span class="kr">data</span> <span class="kt">MovieReview</span> <span class="ow">=</span> <span class="kt">MovieReview</span> <span class="p">{</span>
+          <span class="n">revTitle</span> <span class="ow">::</span> <span class="kt">String</span>
+    <span class="p">,</span> <span class="n">revUser</span> <span class="ow">::</span> <span class="kt">String</span>
+<span class="p">,</span> <span class="n">revReview</span> <span class="ow">::</span> <span class="kt">String</span>
+        <span class="p">}</span>
+</pre></div>
+</div>
+<p>我们首先用一个简单的函数说明：</p>
+<div class="highlight-haskell notranslate"><div class="highlight"><pre><span></span><span class="c1">-- file: ch15/MovieReview.hs</span>
+<span class="nf">simpleReview</span> <span class="ow">::</span> <span class="p">[(</span><span class="kt">String</span><span class="p">,</span> <span class="kt">Maybe</span> <span class="kt">String</span><span class="p">)]</span> <span class="ow">-&gt;</span> <span class="kt">Maybe</span> <span class="kt">MovieReview</span>
+<span class="nf">simpleReview</span> <span class="n">alist</span> <span class="ow">=</span>
+  <span class="kr">case</span> <span class="n">lookup</span> <span class="s">&quot;title&quot;</span> <span class="n">alist</span> <span class="kr">of</span>
+        <span class="kt">Just</span> <span class="p">(</span><span class="kt">Just</span> <span class="n">title</span><span class="o">@</span><span class="p">(</span><span class="kr">_</span><span class="kt">:</span><span class="kr">_</span><span class="p">))</span> <span class="ow">-&gt;</span>
+          <span class="kr">case</span> <span class="n">lookup</span> <span class="s">&quot;user&quot;</span> <span class="n">alist</span> <span class="kr">of</span>
+                <span class="kt">Just</span> <span class="p">(</span><span class="kt">Just</span> <span class="n">user</span><span class="o">@</span><span class="p">(</span><span class="kr">_</span><span class="kt">:</span><span class="kr">_</span><span class="p">))</span> <span class="ow">-&gt;</span>
+                  <span class="kr">case</span> <span class="n">lookup</span> <span class="s">&quot;review&quot;</span> <span class="n">alist</span> <span class="kr">of</span>
+                        <span class="kt">Just</span> <span class="p">(</span><span class="kt">Just</span> <span class="n">review</span><span class="o">@</span><span class="p">(</span><span class="kr">_</span><span class="kt">:</span><span class="kr">_</span><span class="p">))</span> <span class="ow">-&gt;</span>
+                                <span class="kt">Just</span> <span class="p">(</span><span class="kt">MovieReview</span> <span class="n">title</span> <span class="n">user</span> <span class="n">review</span><span class="p">)</span>
+                        <span class="kr">_</span> <span class="ow">-&gt;</span> <span class="kt">Nothing</span> <span class="c1">-- no review</span>
+                <span class="kr">_</span> <span class="ow">-&gt;</span> <span class="kt">Nothing</span> <span class="c1">-- no user</span>
+        <span class="kr">_</span> <span class="ow">-&gt;</span> <span class="kt">Nothing</span> <span class="c1">-- no title</span>
+</pre></div>
+</div>
+<p>当且仅当作为参数的关联列表包含了所有必须的键值对，并且这些键值对中的值不为空时，函数 <code class="docutils literal notranslate"><span class="pre">simpleReview</span></code> 将返回一个 <code class="docutils literal notranslate"><span class="pre">MovieReview</span></code> 。然而，它的优点仅仅是能够验证输入是否合法，实际上它采用了应当尽量避免的“锯齿型（staircasing）”代码结构，并且它过于了解关联列表的表示细节。</p>
+<p>我们已经对 <code class="docutils literal notranslate"><span class="pre">Maybe</span></code> monad 非常熟悉了，上面的代码可以整理一下，让它避免“锯齿化”结构。</p>
+<div class="highlight-haskell notranslate"><div class="highlight"><pre><span></span><span class="c1">-- file: ch15/MovieReview.hs</span>
+<span class="nf">maybeReview</span> <span class="n">alist</span> <span class="ow">=</span> <span class="kr">do</span>
+        <span class="n">title</span> <span class="ow">&lt;-</span> <span class="n">lookup1</span> <span class="s">&quot;title&quot;</span> <span class="n">alist</span>
+        <span class="n">user</span> <span class="ow">&lt;-</span> <span class="n">lookup1</span> <span class="s">&quot;user&quot;</span> <span class="n">alist</span>
+        <span class="n">review</span> <span class="ow">&lt;-</span> <span class="n">lookup1</span> <span class="s">&quot;review&quot;</span> <span class="n">alist</span>
+        <span class="n">return</span> <span class="p">(</span><span class="kt">MovieReview</span> <span class="n">title</span> <span class="n">user</span> <span class="n">review</span><span class="p">)</span>
+
+<span class="nf">lookup1</span> <span class="n">key</span> <span class="n">alist</span> <span class="ow">=</span> <span class="kr">case</span> <span class="n">lookup</span> <span class="n">key</span> <span class="n">alist</span> <span class="kr">of</span>
+                                          <span class="kt">Just</span> <span class="p">(</span><span class="kt">Just</span> <span class="n">s</span><span class="o">@</span><span class="p">(</span><span class="kr">_</span><span class="kt">:</span><span class="kr">_</span><span class="p">))</span> <span class="ow">-&gt;</span> <span class="kt">Just</span> <span class="n">s</span>
+                                          <span class="kr">_</span> <span class="ow">-&gt;</span> <span class="kt">Nothing</span>
+</pre></div>
+</div>
+<p>代码看起来整洁了许多，但其中仍存在重复的工作。我们可以利用 <code class="docutils literal notranslate"><span class="pre">MovieReview</span></code> 构造器是普通纯函数的性质，将其提升为 monad，就像我们在 <a class="reference internal" href="14.html#mixing-pure-and-monadic-code"><span class="std std-ref">同时使用puer和monadic代码</span></a> 讨论过的那样。</p>
+<div class="highlight-haskell notranslate"><div class="highlight"><pre><span></span><span class="c1">-- file: ch15/MovieReview.hs</span>
+<span class="nf">liftedReview</span> <span class="n">alist</span> <span class="ow">=</span>
+        <span class="n">liftM3</span> <span class="kt">MovieReview</span> <span class="p">(</span><span class="n">lookup1</span> <span class="s">&quot;title&quot;</span> <span class="n">alist</span><span class="p">)</span>
+                                           <span class="p">(</span><span class="n">lookup1</span> <span class="s">&quot;user&quot;</span> <span class="n">alist</span><span class="p">)</span>
+                                           <span class="p">(</span><span class="n">lookup1</span> <span class="s">&quot;review&quot;</span> <span class="n">alist</span><span class="p">)</span>
+</pre></div>
+</div>
+<p>在上面这段代码中依旧存在很多重复的工作，但它们已经显著减少了，并且我们很难去除剩下的部分。</p>
+</section>
+<section id="generalised-lifting">
+<span id="id2"></span><h2>广义的提升<a class="headerlink" href="#generalised-lifting" title="Permalink to this headline">¶</a></h2>
+<p>虽然使用 <code class="docutils literal notranslate"><span class="pre">liftM3</span></code> 让我们的代码更加整洁，但我们不能用一堆 <code class="docutils literal notranslate"><span class="pre">liftM</span></code> 去解决更广泛的问题，因为标准库只定义到了 <code class="docutils literal notranslate"><span class="pre">liftM5</span></code>。事实上我们可以根据我们的需要写出任意数字的 <code class="docutils literal notranslate"><span class="pre">liftM</span></code> ，但那将是非常繁重的工作。</p>
+<p>假设我们有一个构造器或者纯函数，并且接受 10 个参数，这时候再坚持用标准库，你恐怕就觉得我们没有那么好运了。</p>
+<p>当然，标准库里面还有其他工具可用，在 <code class="docutils literal notranslate"><span class="pre">Control.Monad</span></code> 中，有一个函数 <code class="docutils literal notranslate"><span class="pre">ap</span></code>，它的类型签名（type signature）非常有趣。</p>
+<div class="highlight-haskell notranslate"><div class="highlight"><pre><span></span><span class="nf">ghci</span><span class="o">&gt;</span> <span class="kt">:</span><span class="n">m</span> <span class="o">+</span><span class="kt">Control</span><span class="o">.</span><span class="kt">Monad</span>
+<span class="nf">ghci</span><span class="o">&gt;</span> <span class="kt">:</span><span class="kr">type</span> <span class="n">ap</span>
+<span class="nf">ap</span> <span class="ow">::</span> <span class="p">(</span><span class="kt">Monad</span> <span class="n">m</span><span class="p">)</span> <span class="ow">=&gt;</span> <span class="n">m</span> <span class="p">(</span><span class="n">a</span> <span class="ow">-&gt;</span> <span class="n">b</span><span class="p">)</span> <span class="ow">-&gt;</span> <span class="n">m</span> <span class="n">a</span> <span class="ow">-&gt;</span> <span class="n">m</span> <span class="n">b</span>
+</pre></div>
+</div>
+<p>你可能会觉得奇怪，谁会把一个接受单一参数的纯函数放到 monad 中，这么做的原因又是什么？回想一下，其实所有的 Haskell 函数本质上都是接受单一参数，<code class="docutils literal notranslate"><span class="pre">MovieReview</span></code> 的构造器也是这样。</p>
+<div class="highlight-haskell notranslate"><div class="highlight"><pre><span></span><span class="nf">ghci</span><span class="o">&gt;</span> <span class="kt">:</span><span class="kr">type</span> <span class="kt">MovieReview</span>
+<span class="kt">MovieReview</span> <span class="ow">::</span> <span class="kt">String</span> <span class="ow">-&gt;</span> <span class="kt">String</span> <span class="ow">-&gt;</span> <span class="kt">String</span> <span class="ow">-&gt;</span> <span class="kt">MovieReview</span>
+</pre></div>
+</div>
+<p>我们可以将类型签名写成 <code class="docutils literal notranslate"><span class="pre">String</span> <span class="pre">-&gt;</span> <span class="pre">(String</span> <span class="pre">-&gt;</span> <span class="pre">String</span> <span class="pre">-&gt;</span> <span class="pre">MovieReview)</span></code>。假如我们使用 <code class="docutils literal notranslate"><span class="pre">liftM</span></code> 将 <code class="docutils literal notranslate"><span class="pre">MovieReview</span></code> 提升为 <code class="docutils literal notranslate"><span class="pre">Maybe</span></code> monad，我们将得到一个类型为 <code class="docutils literal notranslate"><span class="pre">Maybe</span> <span class="pre">(String</span> <span class="pre">-&gt;</span> <span class="pre">(String</span> <span class="pre">-&gt;</span> <span class="pre">(String</span> <span class="pre">-&gt;</span> <span class="pre">MovieReview)))``的值。这个类型恰好是</span> <span class="pre">``ap</span></code> 接受的参数的类型，并且 <code class="docutils literal notranslate"><span class="pre">ap</span></code> 的返回类型将是 <code class="docutils literal notranslate"><span class="pre">Maybe</span> <span class="pre">(String</span> <span class="pre">-&gt;</span> <span class="pre">(String</span> <span class="pre">-&gt;</span> <span class="pre">MovieReview))</span></code>。我们可以将 <code class="docutils literal notranslate"><span class="pre">ap</span></code> 返回的值继续传入 <code class="docutils literal notranslate"><span class="pre">ap</span></code> ，直到我们结束这个定义。</p>
+<div class="highlight-haskell notranslate"><div class="highlight"><pre><span></span><span class="c1">-- file: ch15/MovieReview.hs</span>
+<span class="nf">apReview</span> <span class="n">alist</span> <span class="ow">=</span>
+        <span class="kt">MovieReview</span> <span class="p">`</span><span class="n">liftM</span><span class="p">`</span> <span class="n">lookup1</span> <span class="s">&quot;title&quot;</span> <span class="n">alist</span>
+                                   <span class="p">`</span><span class="n">ap</span><span class="p">`</span> <span class="n">lookup1</span> <span class="s">&quot;user&quot;</span> <span class="n">alist</span>
+                                   <span class="p">`</span><span class="n">ap</span><span class="p">`</span> <span class="n">lookup1</span> <span class="s">&quot;review&quot;</span> <span class="n">alist</span>
+</pre></div>
+</div>
+<div class="admonition warning">
+<p class="admonition-title">Warning</p>
+<p>[译注：原著这里存在错误，上面的译文直接翻译了原著，在此做出修正。使用 <code class="docutils literal notranslate"><span class="pre">liftM</span></code> 将 <code class="docutils literal notranslate"><span class="pre">MovieReview</span></code> 提升为 <code class="docutils literal notranslate"><span class="pre">Maybe</span></code> monad后，得到的类型不是 <code class="docutils literal notranslate"><span class="pre">Maybe</span> <span class="pre">(String</span> <span class="pre">-&gt;</span> <span class="pre">(String</span> <span class="pre">-&gt;</span> <span class="pre">(String</span> <span class="pre">-&gt;</span> <span class="pre">MovieReview)))</span></code>，而是 <code class="docutils literal notranslate"><span class="pre">Maybe</span> <span class="pre">String</span> <span class="pre">-&gt;</span> <span class="pre">Maybe</span> <span class="pre">(String</span> <span class="pre">-&gt;</span> <span class="pre">(String</span> <span class="pre">-&gt;</span> <span class="pre">MovieReview))</span></code>。下面给出在不断应用 <code class="docutils literal notranslate"><span class="pre">ap</span></code> 时，类型系统的显示变化过程。]</p>
+<div class="highlight-haskell notranslate"><div class="highlight"><pre><span></span><span class="c1">-- note by translator</span>
+        <span class="kt">MovieReview</span> <span class="ow">::</span> <span class="kt">String</span> <span class="ow">-&gt;</span> <span class="p">(</span> <span class="kt">String</span> <span class="ow">-&gt;</span> <span class="kt">String</span> <span class="ow">-&gt;</span> <span class="kt">MovieRevie</span> <span class="p">)</span>
+        <span class="kt">MovieReview</span> <span class="p">`</span><span class="n">liftM</span><span class="p">`</span> <span class="ow">::</span> <span class="kt">Maybe</span> <span class="kt">String</span> <span class="ow">-&gt;</span> <span class="kt">Maybe</span> <span class="p">(</span> <span class="kt">String</span> <span class="ow">-&gt;</span> <span class="kt">String</span> <span class="ow">-&gt;</span> <span class="kt">MovieRevie</span> <span class="p">)</span>
+        <span class="kt">MovieReview</span> <span class="p">`</span><span class="n">liftM</span><span class="p">`</span> <span class="n">lookup1</span> <span class="s">&quot;title&quot;</span> <span class="n">alist</span> <span class="ow">::</span> <span class="kt">Maybe</span> <span class="p">(</span> <span class="kt">String</span> <span class="ow">-&gt;</span> <span class="kt">String</span> <span class="ow">-&gt;</span> <span class="kt">MovieRevie</span> <span class="p">)</span>
+        <span class="kt">MovieReview</span> <span class="p">`</span><span class="n">liftM</span><span class="p">`</span> <span class="n">lookup1</span> <span class="s">&quot;title&quot;</span> <span class="n">alist</span> <span class="p">`</span><span class="n">ap</span><span class="p">`</span> <span class="ow">::</span> <span class="kt">Myabe</span> <span class="kt">String</span> <span class="ow">-&gt;</span> <span class="kt">Maybe</span> <span class="p">(</span> <span class="kt">String</span> <span class="ow">-&gt;</span> <span class="kt">MovieRevie</span> <span class="p">)</span>
+        <span class="kt">MovieReview</span> <span class="p">`</span><span class="n">liftM</span><span class="p">`</span> <span class="n">lookup1</span> <span class="s">&quot;title&quot;</span> <span class="n">alist</span> <span class="p">`</span><span class="n">ap</span><span class="p">`</span> <span class="n">lookup1</span> <span class="s">&quot;user&quot;</span> <span class="n">alist</span> <span class="ow">::</span> <span class="kt">Maybe</span> <span class="p">(</span> <span class="kt">String</span> <span class="ow">-&gt;</span> <span class="kt">MovieRevie</span> <span class="p">)</span>
+</pre></div>
+</div>
+</div>
+<p>我们可以通过不断应用 <code class="docutils literal notranslate"><span class="pre">ap</span></code> 来替代 <code class="docutils literal notranslate"><span class="pre">liftM</span></code> 的一系列函数。</p>
+<p>这样理解 <code class="docutils literal notranslate"><span class="pre">ap</span></code> 可能会对你有所帮助：<code class="docutils literal notranslate"><span class="pre">ap</span></code> 的 monadic 等价于我们熟悉的 <code class="docutils literal notranslate"><span class="pre">($)</span></code> 运算符，你可以想象一下把 <code class="docutils literal notranslate"><span class="pre">ap</span></code> 读成 <code class="docutils literal notranslate"><span class="pre">apply</span></code>。通过观察这二者的类型签名，我们可以清晰地看到这一点。</p>
+<div class="highlight-haskell notranslate"><div class="highlight"><pre><span></span><span class="nf">ghci</span><span class="o">&gt;</span> <span class="kt">:</span><span class="kr">type</span> <span class="p">(</span><span class="o">$</span><span class="p">)</span>
+<span class="p">(</span><span class="o">$</span><span class="p">)</span> <span class="ow">::</span> <span class="p">(</span><span class="n">a</span> <span class="ow">-&gt;</span> <span class="n">b</span><span class="p">)</span> <span class="ow">-&gt;</span> <span class="n">a</span> <span class="ow">-&gt;</span> <span class="n">b</span>
+<span class="nf">ghci</span><span class="o">&gt;</span> <span class="kt">:</span><span class="kr">type</span> <span class="n">ap</span>
+<span class="nf">ap</span> <span class="ow">::</span> <span class="p">(</span><span class="kt">Monad</span> <span class="n">m</span><span class="p">)</span> <span class="ow">=&gt;</span> <span class="n">m</span> <span class="p">(</span><span class="n">a</span> <span class="ow">-&gt;</span> <span class="n">b</span><span class="p">)</span> <span class="ow">-&gt;</span> <span class="n">m</span> <span class="n">a</span> <span class="ow">-&gt;</span> <span class="n">m</span> <span class="n">b</span>
+</pre></div>
+</div>
+<p>事实上，<code class="docutils literal notranslate"><span class="pre">ap</span></code> 通常被定义为 <code class="docutils literal notranslate"><span class="pre">liftM2</span> <span class="pre">id</span></code> 或者 <code class="docutils literal notranslate"><span class="pre">liftM2</span> <span class="pre">($)</span></code>。[译注：如果你使用 <code class="docutils literal notranslate"><span class="pre">:t</span></code> 来观察这两种书写形式得到的类型签名，你会发现它们在类型细节上有所差异，这是由 <code class="docutils literal notranslate"><span class="pre">id</span></code> 和 <code class="docutils literal notranslate"><span class="pre">($)</span></code> 本身类型签名的不同导致的，<code class="docutils literal notranslate"><span class="pre">id``的签名是``a</span> <span class="pre">-&gt;</span> <span class="pre">a</span></code>，而 <code class="docutils literal notranslate"><span class="pre">($)</span></code> 是 <code class="docutils literal notranslate"><span class="pre">(a</span> <span class="pre">-&gt;</span> <span class="pre">b)</span> <span class="pre">-&gt;</span> <span class="pre">(a</span> <span class="pre">-&gt;</span> <span class="pre">b)</span></code>，当然这对于广义的类型是等同的。]</p>
+</section>
+<section id="looking-for-alternatives">
+<span id="id3"></span><h2>寻找替代方案<a class="headerlink" href="#looking-for-alternatives" title="Permalink to this headline">¶</a></h2>
+<p>下面是通讯录中一项的简单表示。</p>
+<div class="highlight-haskell notranslate"><div class="highlight"><pre><span></span><span class="c1">-- file: ch15/VCard.hs</span>
+<span class="kr">data</span> <span class="kt">Context</span> <span class="ow">=</span> <span class="kt">Home</span> <span class="o">|</span> <span class="kt">Mobile</span> <span class="o">|</span> <span class="kt">Business</span>
+                           <span class="kr">deriving</span> <span class="p">(</span><span class="kt">Eq</span><span class="p">,</span> <span class="kt">Show</span><span class="p">)</span>
+
+<span class="kr">type</span> <span class="kt">Phone</span> <span class="ow">=</span> <span class="kt">String</span>
+
+<span class="nf">albulena</span> <span class="ow">=</span> <span class="p">[(</span><span class="kt">Home</span><span class="p">,</span> <span class="s">&quot;+355-652-55512&quot;</span><span class="p">)]</span>
+
+<span class="nf">nils</span> <span class="ow">=</span> <span class="p">[(</span><span class="kt">Mobile</span><span class="p">,</span> <span class="s">&quot;+47-922-55-512&quot;</span><span class="p">),</span> <span class="p">(</span><span class="kt">Business</span><span class="p">,</span> <span class="s">&quot;+47-922-12-121&quot;</span><span class="p">),</span>
+                <span class="p">(</span><span class="kt">Home</span><span class="p">,</span> <span class="s">&quot;+47-925-55-121&quot;</span><span class="p">),</span> <span class="p">(</span><span class="kt">Business</span><span class="p">,</span> <span class="s">&quot;+47-922-25-551&quot;</span><span class="p">)]</span>
+
+<span class="nf">twalumba</span> <span class="ow">=</span> <span class="p">[(</span><span class="kt">Business</span><span class="p">,</span> <span class="s">&quot;+260-02-55-5121&quot;</span><span class="p">)]</span>
+</pre></div>
+</div>
+<p>假设我们想给某个人打一个私人电话，我们必然会选择他的家庭号码（假如他有的话），而不是他的工作号码。</p>
+<div class="highlight-haskell notranslate"><div class="highlight"><pre><span></span><span class="c1">-- file: ch15/VCard.hs</span>
+<span class="nf">onePersonalPhone</span> <span class="ow">::</span> <span class="p">[(</span><span class="kt">Context</span><span class="p">,</span> <span class="kt">Phone</span><span class="p">)]</span> <span class="ow">-&gt;</span> <span class="kt">Maybe</span> <span class="kt">Phone</span>
+<span class="nf">onePersonalPhone</span> <span class="n">ps</span> <span class="ow">=</span> <span class="kr">case</span> <span class="n">lookup</span> <span class="kt">Home</span> <span class="n">ps</span> <span class="kr">of</span>
+                                                <span class="kt">Nothing</span> <span class="ow">-&gt;</span> <span class="n">lookup</span> <span class="kt">Mobile</span> <span class="n">ps</span>
+                                                <span class="kt">Just</span> <span class="n">n</span> <span class="ow">-&gt;</span> <span class="kt">Just</span> <span class="n">n</span>
+</pre></div>
+</div>
+<p>在上面的代码中，我们使用 <code class="docutils literal notranslate"><span class="pre">Maybe</span></code> 作为生成结果的类型，这样无法处理某个人有多个符合要求的号码的情况。因此，我们将返回类型转换为一个列表。</p>
+<div class="highlight-haskell notranslate"><div class="highlight"><pre><span></span><span class="c1">-- file: ch15/VCard.hs</span>
+<span class="nf">allBusinessPhones</span> <span class="ow">::</span> <span class="p">[(</span><span class="kt">Context</span><span class="p">,</span> <span class="kt">Phone</span><span class="p">)]</span> <span class="ow">-&gt;</span> <span class="p">[</span><span class="kt">Phone</span><span class="p">]</span>
+<span class="nf">allBusinessPhones</span> <span class="n">ps</span> <span class="ow">=</span> <span class="n">map</span> <span class="n">snd</span> <span class="n">numbers</span>
+        <span class="kr">where</span> <span class="n">numbers</span> <span class="ow">=</span> <span class="kr">case</span> <span class="n">filter</span> <span class="p">(</span><span class="n">contextIs</span> <span class="kt">Business</span><span class="p">)</span> <span class="n">ps</span> <span class="kr">of</span>
+                                          <span class="kt">[]</span> <span class="ow">-&gt;</span> <span class="n">filter</span> <span class="p">(</span><span class="n">contextIs</span> <span class="kt">Mobile</span><span class="p">)</span> <span class="n">ps</span>
+                                          <span class="n">ns</span> <span class="ow">-&gt;</span> <span class="n">ns</span>
+
+<span class="nf">contextIs</span> <span class="n">a</span> <span class="p">(</span><span class="n">b</span><span class="p">,</span> <span class="kr">_</span><span class="p">)</span> <span class="ow">=</span> <span class="n">a</span> <span class="o">==</span> <span class="n">b</span>
+</pre></div>
+</div>
+<p>注意，这两个函数中 <code class="docutils literal notranslate"><span class="pre">case</span></code> 表达式的结构非常相似：其中一个标签处理查找结果为空的情况，剩下的处理结果非空的情况。</p>
+<div class="highlight-haskell notranslate"><div class="highlight"><pre><span></span><span class="nf">ghci</span><span class="o">&gt;</span> <span class="n">onePersonalPhone</span> <span class="n">twalumba</span>
+<span class="kt">Nothing</span>
+<span class="nf">ghci</span><span class="o">&gt;</span> <span class="n">onePersonalPhone</span> <span class="n">albulena</span>
+<span class="kt">Just</span> <span class="s">&quot;+355-652-55512&quot;</span>
+<span class="nf">ghci</span><span class="o">&gt;</span> <span class="n">allBusinessPhones</span> <span class="n">nils</span>
+<span class="p">[</span><span class="s">&quot;+47-922-12-121&quot;</span><span class="p">,</span><span class="s">&quot;+47-922-25-551&quot;</span><span class="p">]</span>
+</pre></div>
+</div>
+<p>[译注：这里的代码通过需要 <code class="docutils literal notranslate"><span class="pre">:l</span></code> 导入 <code class="docutils literal notranslate"><span class="pre">VCard.hs</span></code> ]</p>
+<p>Haskell 的 <code class="docutils literal notranslate"><span class="pre">Control.Monad</span></code> 模块定义了一种类型类 <code class="docutils literal notranslate"><span class="pre">MonadPlus</span></code> ，这使我们可以将 <code class="docutils literal notranslate"><span class="pre">case</span></code> 表达式中的普通模式抽象出来。</p>
+<div class="highlight-haskell notranslate"><div class="highlight"><pre><span></span><span class="c1">-- file: ch15/VCard.hs</span>
+<span class="kr">class</span> <span class="kt">Monad</span> <span class="n">m</span> <span class="ow">=&gt;</span> <span class="kt">MonadPlus</span> <span class="n">m</span> <span class="kr">where</span>
+   <span class="n">mzero</span> <span class="ow">::</span> <span class="n">m</span> <span class="n">a</span>
+   <span class="n">mplus</span> <span class="ow">::</span> <span class="n">m</span> <span class="n">a</span> <span class="ow">-&gt;</span> <span class="n">m</span> <span class="n">a</span> <span class="ow">-&gt;</span> <span class="n">m</span> <span class="n">a</span>
+</pre></div>
+</div>
+<p>值 <code class="docutils literal notranslate"><span class="pre">mzero</span></code> 表示了一个空结果， <code class="docutils literal notranslate"><span class="pre">mplus</span></code> 将两个结果合并为一个。下面是 <code class="docutils literal notranslate"><span class="pre">mzero</span></code> 和 <code class="docutils literal notranslate"><span class="pre">mplus</span></code> 针对 <code class="docutils literal notranslate"><span class="pre">Maybe</span></code> 和列表的标准定义。[译注：在约翰·休斯 1998 年发表的《Generalising Monads to Arrows》中，他提出 <code class="docutils literal notranslate"><span class="pre">mzero</span></code> 可理解为对失败情况的一种概括，而 <code class="docutils literal notranslate"><span class="pre">mplus</span></code> 则是对选择情况的概括，例如如果第一种情况失败，则尝试第二种。]</p>
+<div class="highlight-haskell notranslate"><div class="highlight"><pre><span></span><span class="c1">-- file: ch15/VCard.hs</span>
+<span class="kr">instance</span> <span class="kt">MonadPlus</span> <span class="kt">[]</span> <span class="kr">where</span>
+   <span class="n">mzero</span> <span class="ow">=</span> <span class="kt">[]</span>
+   <span class="n">mplus</span> <span class="ow">=</span> <span class="p">(</span><span class="o">++</span><span class="p">)</span>
+
+<span class="kr">instance</span> <span class="kt">MonadPlus</span> <span class="kt">Maybe</span> <span class="kr">where</span>
+   <span class="n">mzero</span> <span class="ow">=</span> <span class="kt">Nothing</span>
+
+   <span class="kt">Nothing</span> <span class="p">`</span><span class="n">mplus</span><span class="p">`</span> <span class="n">ys</span>  <span class="ow">=</span> <span class="n">ys</span>
+   <span class="n">xs</span>      <span class="p">`</span><span class="n">mplus</span><span class="p">`</span> <span class="kr">_</span> <span class="ow">=</span> <span class="n">xs</span>
+</pre></div>
+</div>
+<p>我们现在可以使用 <code class="docutils literal notranslate"><span class="pre">mplus</span></code> 替换掉整个 <code class="docutils literal notranslate"><span class="pre">case</span></code> 表达式。为了照顾情况的多样性，我们下面来获取通讯录中某人的一个工作号码和他所有的私人号码。</p>
+<div class="highlight-haskell notranslate"><div class="highlight"><pre><span></span><span class="c1">-- file: ch15/VCard.hs</span>
+<span class="nf">oneBusinessPhone</span> <span class="ow">::</span> <span class="p">[(</span><span class="kt">Context</span><span class="p">,</span> <span class="kt">Phone</span><span class="p">)]</span> <span class="ow">-&gt;</span> <span class="kt">Maybe</span> <span class="kt">Phone</span>
+<span class="nf">oneBusinessPhone</span> <span class="n">ps</span> <span class="ow">=</span> <span class="n">lookup</span> <span class="kt">Business</span> <span class="n">ps</span> <span class="p">`</span><span class="n">mplus</span><span class="p">`</span> <span class="n">lookup</span> <span class="kt">Mobile</span> <span class="n">ps</span>
+
+<span class="nf">allPersonalPhones</span> <span class="ow">::</span> <span class="p">[(</span><span class="kt">Context</span><span class="p">,</span> <span class="kt">Phone</span><span class="p">)]</span> <span class="ow">-&gt;</span> <span class="p">[</span><span class="kt">Phone</span><span class="p">]</span>
+<span class="nf">allPersonalPhones</span> <span class="n">ps</span> <span class="ow">=</span> <span class="n">map</span> <span class="n">snd</span> <span class="o">$</span> <span class="n">filter</span> <span class="p">(</span><span class="n">contextIs</span> <span class="kt">Home</span><span class="p">)</span> <span class="n">ps</span> <span class="p">`</span><span class="n">mplus</span><span class="p">`</span>
+                                                                 <span class="n">filter</span> <span class="p">(</span><span class="n">contextIs</span> <span class="kt">Mobile</span><span class="p">)</span> <span class="n">ps</span>
+</pre></div>
+</div>
+<p>[译注：在前面的例子中，我们将 <code class="docutils literal notranslate"><span class="pre">mplus</span></code> 作为 <code class="docutils literal notranslate"><span class="pre">case</span></code> 模式的一种抽象表达来介绍，但是对于 <code class="docutils literal notranslate"><span class="pre">list</span></code> monad，它会产生和前面例子不同的结果。考虑前面的例子 <code class="docutils literal notranslate"><span class="pre">allBusinessPhones</span></code>，我们试图获取一个人的全部工作号码，当且仅当他没有工作号码时，结果中才包含私人号码。而 <code class="docutils literal notranslate"><span class="pre">mplus</span></code> 只是将全部工作号码和私人号码连接在一起，这和我们想要的结果有出入。]</p>
+<p>我们已经知道 <code class="docutils literal notranslate"><span class="pre">lookup</span></code> 会返回一个 <code class="docutils literal notranslate"><span class="pre">Maybe</span></code> 类型的值，而 <code class="docutils literal notranslate"><span class="pre">filter</span></code> 将返回一个列表，所以对于这些函数，应当使用什么版本的 <code class="docutils literal notranslate"><span class="pre">mplus</span></code> 是非常显然的。</p>
+<p>更有趣的是我们现在可以使用 <code class="docutils literal notranslate"><span class="pre">mzero</span></code> 和 <code class="docutils literal notranslate"><span class="pre">mplus</span></code> 来编写对任意 <code class="docutils literal notranslate"><span class="pre">MonadPlus</span></code> 实例均有效的函数。举例而言，下面是一个标准的 <code class="docutils literal notranslate"><span class="pre">lookup</span></code> 函数，它将返回一个 <code class="docutils literal notranslate"><span class="pre">Maybe</span></code> 类型的值。</p>
+<div class="highlight-haskell notranslate"><div class="highlight"><pre><span></span><span class="c1">-- file: ch15/VCard.hs</span>
+<span class="nf">lookup</span> <span class="ow">::</span> <span class="p">(</span><span class="kt">Eq</span> <span class="n">a</span><span class="p">)</span> <span class="ow">=&gt;</span> <span class="n">a</span> <span class="ow">-&gt;</span> <span class="p">[(</span><span class="n">a</span><span class="p">,</span> <span class="n">b</span><span class="p">)]</span> <span class="ow">-&gt;</span> <span class="kt">Maybe</span> <span class="n">b</span>
+<span class="nf">lookup</span> <span class="kr">_</span> <span class="kt">[]</span>                      <span class="ow">=</span> <span class="kt">Nothing</span>
+<span class="nf">lookup</span> <span class="n">k</span> <span class="p">((</span><span class="n">x</span><span class="p">,</span><span class="n">y</span><span class="p">)</span><span class="kt">:</span><span class="n">xys</span><span class="p">)</span> <span class="o">|</span> <span class="n">x</span> <span class="o">==</span> <span class="n">k</span>    <span class="ow">=</span> <span class="kt">Just</span> <span class="n">y</span>
+                                         <span class="o">|</span> <span class="n">otherwise</span> <span class="ow">=</span> <span class="n">lookup</span> <span class="n">k</span> <span class="n">xys</span>
+</pre></div>
+</div>
+<p>通过下面的代码，我们可以很容易的将结果类型推广到 <code class="docutils literal notranslate"><span class="pre">MonadPlus</span></code> 的任意实例。</p>
+<div class="highlight-haskell notranslate"><div class="highlight"><pre><span></span><span class="c1">-- file: ch15/VCard.hs</span>
+<span class="nf">lookupM</span> <span class="ow">::</span> <span class="p">(</span><span class="kt">MonadPlus</span> <span class="n">m</span><span class="p">,</span> <span class="kt">Eq</span> <span class="n">a</span><span class="p">)</span> <span class="ow">=&gt;</span> <span class="n">a</span> <span class="ow">-&gt;</span> <span class="p">[(</span><span class="n">a</span><span class="p">,</span> <span class="n">b</span><span class="p">)]</span> <span class="ow">-&gt;</span> <span class="n">m</span> <span class="n">b</span>
+<span class="nf">lookupM</span> <span class="kr">_</span> <span class="kt">[]</span>    <span class="ow">=</span> <span class="n">mzero</span>
+<span class="nf">lookupM</span> <span class="n">k</span> <span class="p">((</span><span class="n">x</span><span class="p">,</span><span class="n">y</span><span class="p">)</span><span class="kt">:</span><span class="n">xys</span><span class="p">)</span>
+        <span class="o">|</span> <span class="n">x</span> <span class="o">==</span> <span class="n">k</span>    <span class="ow">=</span> <span class="n">return</span> <span class="n">y</span> <span class="p">`</span><span class="n">mplus</span><span class="p">`</span> <span class="n">lookupM</span> <span class="n">k</span> <span class="n">xys</span>
+        <span class="o">|</span> <span class="n">otherwise</span> <span class="ow">=</span> <span class="n">lookupM</span> <span class="n">k</span> <span class="n">xys</span>
+</pre></div>
+</div>
+<p>假如我们得到的结果是 <code class="docutils literal notranslate"><span class="pre">Maybe</span></code> 类型，那么通过这种方式我们将得到一个结果或“没有结果”；假如我们得到的结果是一个列表，那么我们将获得所有的结果；其它情况下，我们将获得一些适用于其它 <code class="docutils literal notranslate"><span class="pre">MonadPlus</span></code> 实例的结果。</p>
+<p>对于一些类似我们上面展示的小函数，使用 <code class="docutils literal notranslate"><span class="pre">mplus</span></code> 没什么明显的优点。 <code class="docutils literal notranslate"><span class="pre">mplus</span></code> 的优点体现在更复杂的代码和那些独立于 monad 执行过程的代码中。即使你没有在自己的代码中碰到需要使用 <code class="docutils literal notranslate"><span class="pre">MonadPlus</span></code> 的情况，你也很可能在别人的项目中遇到它。</p>
+<section id="mplus">
+<span id="the-name-mplus-does-not-imply-addition"></span><h3>mplus 不意味着相加<a class="headerlink" href="#mplus" title="Permalink to this headline">¶</a></h3>
+<p>函数 <code class="docutils literal notranslate"><span class="pre">mplus</span></code> 的名字中包含了 “plus”，但这并不代表着我们一定是要将两个值相加。根据我们处理的 monad 的不同，有时 <code class="docutils literal notranslate"><span class="pre">mplus</span></code> 会实现看起来类似相加的操作。例如，列表 monad 中 <code class="docutils literal notranslate"><span class="pre">mplus</span></code> 等同于 <code class="docutils literal notranslate"><span class="pre">(++)</span></code> 运算符。</p>
+<div class="highlight-haskell notranslate"><div class="highlight"><pre><span></span><span class="nf">ghci</span><span class="o">&gt;</span> <span class="p">[</span><span class="mi">1</span><span class="p">,</span><span class="mi">2</span><span class="p">,</span><span class="mi">3</span><span class="p">]</span> <span class="p">`</span><span class="n">mplus</span><span class="p">`</span> <span class="p">[</span><span class="mi">4</span><span class="p">,</span><span class="mi">5</span><span class="p">,</span><span class="mi">6</span><span class="p">]</span>
+<span class="p">[</span><span class="mi">1</span><span class="p">,</span><span class="mi">2</span><span class="p">,</span><span class="mi">3</span><span class="p">,</span><span class="mi">4</span><span class="p">,</span><span class="mi">5</span><span class="p">,</span><span class="mi">6</span><span class="p">]</span>
+</pre></div>
+</div>
+<p>但是，假如我们切换到另一个 monad， <code class="docutils literal notranslate"><span class="pre">mplus</span></code> 和加法操作将不存在明显的相似性。</p>
+<div class="highlight-haskell notranslate"><div class="highlight"><pre><span></span><span class="nf">ghci</span><span class="o">&gt;</span> <span class="kt">Just</span> <span class="mi">1</span> <span class="p">`</span><span class="n">mplus</span><span class="p">`</span> <span class="kt">Just</span> <span class="mi">2</span>
+<span class="kt">Just</span> <span class="mi">1</span>
+</pre></div>
+</div>
+</section>
+<section id="monadplus">
+<span id="rules-for-working-with-monadplus"></span><h3>使用 MonadPlus 的规则<a class="headerlink" href="#monadplus" title="Permalink to this headline">¶</a></h3>
+<p>除了通常情况下 monad 的规则外， <code class="docutils literal notranslate"><span class="pre">MonadPlus</span></code> 类型类的实例必须遵循一些其他简单的规则。</p>
+<p>如果一个捆绑表达式左侧出现了 <code class="docutils literal notranslate"><span class="pre">mzero</span></code> ，那么这个实例必须短路（short circuit）。换句话说，表达式 <code class="docutils literal notranslate"><span class="pre">mzero</span> <span class="pre">&gt;&gt;=</span> <span class="pre">f</span></code> 必须和单独的 <code class="docutils literal notranslate"><span class="pre">mzero</span></code> 效果相同。[译注：“短路” 也用来描述严格求值语言中布尔运算符的“短路”特性，例如 <code class="docutils literal notranslate"><span class="pre">B</span> <span class="pre">!=</span> <span class="pre">null</span> <span class="pre">&amp;&amp;</span> <span class="pre">B.value</span> <span class="pre">!=</span> <span class="pre">&quot;&quot;</span></code> 可以避免在 <code class="docutils literal notranslate"><span class="pre">B</span> <span class="pre">==</span> <span class="pre">null</span></code> 时考量 <code class="docutils literal notranslate"><span class="pre">B.value</span></code> ]</p>
+<div class="highlight-haskell notranslate"><div class="highlight"><pre><span></span><span class="c1">-- file: ch15/MonadPlus.hs</span>
+        <span class="n">mzero</span> <span class="o">&gt;&gt;=</span> <span class="n">f</span> <span class="o">==</span> <span class="n">mzero</span>
+</pre></div>
+</div>
+<p>如果 <code class="docutils literal notranslate"><span class="pre">mzero</span></code> 出现在了一个序列表达式的右侧，则这个实例必须短路。[译注：此处存在争议，例如 <code class="docutils literal notranslate"><span class="pre">Maybe</span></code> monad的一个例子 <code class="docutils literal notranslate"><span class="pre">(undefined</span> <span class="pre">&gt;&gt;</span> <span class="pre">Nothing)</span> <span class="pre">=</span> <span class="pre">undefined</span> <span class="pre">/=</span> <span class="pre">Nothing</span></code> 不满足这一条件。一种观点认为，短路特性意味着如果表达式中某个操作数的结果为某事，则不评估另一个操作数，也就是说必须首先评估一个操作数。所以，在“从左向右”和“从右向左”的短路之间，只能存在一种。]</p>
+<div class="highlight-haskell notranslate"><div class="highlight"><pre><span></span><span class="c1">-- file: ch15/MonadPlus.hs</span>
+        <span class="n">v</span> <span class="o">&gt;&gt;</span> <span class="n">mzero</span> <span class="o">==</span> <span class="n">mzero</span>
+</pre></div>
+</div>
+</section>
+<section id="failing-safely-with-monadplus">
+<span id="id4"></span><h3>通过 MonadPlus 安全地失败<a class="headerlink" href="#failing-safely-with-monadplus" title="Permalink to this headline">¶</a></h3>
+<p>当我们在 <a class="reference internal" href="14.html#the-monad-typeclass"><span class="std std-ref">Monad 类型类</span></a> 中介绍 <code class="docutils literal notranslate"><span class="pre">fail</span></code> 函数时，我们对它的使用提出了警告：在许多 monad 中，它可能被实现为一个对错误的调用，这会导致令人不愉快的后果。</p>
+<p><code class="docutils literal notranslate"><span class="pre">MonadPlus</span></code> 类型类为我们提供了一种更温和的方法来使一个计算失败，这使我们不必面临使用 <code class="docutils literal notranslate"><span class="pre">fail</span></code> 和 <code class="docutils literal notranslate"><span class="pre">error</span></code> 带来的危险。上面介绍的规则允许我们在代码中需要的任何地方引入一个 <code class="docutils literal notranslate"><span class="pre">mzero</span></code> ，这样计算将在该处短路。</p>
+<p>在 <code class="docutils literal notranslate"><span class="pre">Control.Monad</span></code> 模块中，标准函数 <code class="docutils literal notranslate"><span class="pre">guard</span></code> 将这个想法封装成了一种方便的形式。</p>
+<div class="highlight-haskell notranslate"><div class="highlight"><pre><span></span><span class="c1">-- file: ch15/MonadPlus.hs</span>
+<span class="nf">guard</span>        <span class="ow">::</span> <span class="p">(</span><span class="kt">MonadPlus</span> <span class="n">m</span><span class="p">)</span> <span class="ow">=&gt;</span> <span class="kt">Bool</span> <span class="ow">-&gt;</span> <span class="n">m</span> <span class="nb">()</span>
+<span class="nf">guard</span> <span class="kt">True</span>   <span class="ow">=</span>  <span class="n">return</span> <span class="nb">()</span>
+<span class="nf">guard</span> <span class="kt">False</span>  <span class="ow">=</span>  <span class="n">mzero</span>
+</pre></div>
+</div>
+<p>作为一个简单的例子，这里有一个函数，它接受一个数 <code class="docutils literal notranslate"><span class="pre">x</span></code> 作为参数，并计算 <code class="docutils literal notranslate"><span class="pre">x</span></code> 对于另一个数 <code class="docutils literal notranslate"><span class="pre">n</span></code> 的取模结果。假如结果是 0 则返回 <code class="docutils literal notranslate"><span class="pre">x</span></code> ，否则返回当前 monad 对应的 <code class="docutils literal notranslate"><span class="pre">mzero</span></code> 。</p>
+<div class="highlight-haskell notranslate"><div class="highlight"><pre><span></span><span class="c1">-- file: ch15/MonadPlus.hs</span>
+<span class="nf">x</span> <span class="p">`</span><span class="n">zeroMod</span><span class="p">`</span> <span class="n">n</span> <span class="ow">=</span> <span class="n">guard</span> <span class="p">((</span><span class="n">x</span> <span class="p">`</span><span class="n">mod</span><span class="p">`</span> <span class="n">n</span><span class="p">)</span> <span class="o">==</span> <span class="mi">0</span><span class="p">)</span> <span class="o">&gt;&gt;</span> <span class="n">return</span> <span class="n">x</span>
+</pre></div>
+</div>
+</section>
+</section>
+<section id="adventures-in-hiding-the-plumbing">
+<span id="id5"></span><h2>隐藏管道<a class="headerlink" href="#adventures-in-hiding-the-plumbing" title="Permalink to this headline">¶</a></h2>
+<p>在 <a class="reference internal" href="14.html#using-the-state-monad-generating-random-values"><span class="std std-ref">使用State monad生成随机数</span></a> 中，我们展示了使用 <code class="docutils literal notranslate"><span class="pre">State</span></code> monad 生成随机数的简单方法。</p>
+<p>我们编写的代码的一个缺点是它泄露了细节：使用者知道代码运行在 <code class="docutils literal notranslate"><span class="pre">State</span></code> monad中。这意味着他们可以像我们这些作者一样检测并修改随机数生成器的状态。</p>
+<p>人的本性决定了，一旦我们将工作内部细节暴露出来，就会有人试图对其做手脚。对于一个足够小的程序，这也许没什么问题，但在更大的软件项目中，如果库的某个使用者使用了其他使用者都没有预料到的方式修改库，这一举动可能导致的错误将非常严重。因为问题出现在库中，而我们通常不会怀疑库有问题，所以这些错误很难被发现，直到我们排除了所有其他可能。</p>
+<p>更糟糕的是，一旦程序的实现细节暴露，一些人将绕过我们提供的 API 并直接采用内部实现方式。当我们需要修复某个错误或者增强某个功能时，我们等于为自己设置了一道屏障。我们要么修改内部、破坏依赖它们的代码，要么坚持现有的内部结构并寻找其他方式来做出需要的改变。</p>
+<p>我们该如何修改随机数 monad 来隐藏我们使用了 <code class="docutils literal notranslate"><span class="pre">State</span></code> monad 的事实？我们需要使用某种方式来阻止用户调用 <code class="docutils literal notranslate"><span class="pre">get</span></code> 或 <code class="docutils literal notranslate"><span class="pre">put</span></code> 。要实现这一点并不难，并且在具体实现中我们将会介绍一些在日常 Haskell 编程中经常使用的技巧。</p>
+<p>为了扩大应用的范围，我们不用随机数做例子，而是实现了一个可以提供任意类型不重复值的 monad，这个 monad 叫做 <code class="docutils literal notranslate"><span class="pre">Supply</span></code> 。我们将为执行函数 <code class="docutils literal notranslate"><span class="pre">runSupply</span></code> 提供一个值的列表，并确保列表中每个值是独一无二的。</p>
+<div class="highlight-haskell notranslate"><div class="highlight"><pre><span></span><span class="c1">-- file: ch15/Supply.hs</span>
+<span class="nf">runSupply</span> <span class="ow">::</span> <span class="kt">Supply</span> <span class="n">s</span> <span class="n">a</span> <span class="ow">-&gt;</span> <span class="p">[</span><span class="n">s</span><span class="p">]</span> <span class="ow">-&gt;</span> <span class="p">(</span><span class="n">a</span><span class="p">,</span> <span class="p">[</span><span class="n">s</span><span class="p">])</span>
+</pre></div>
+</div>
+<p>这个 monad 并不关心这些值是什么，它们可能是随机数，或临时文件的名称，或者是 HTTP cookie的标识符。</p>
+<p>在这个 monad 中，每当用户要求获取一个值时， <code class="docutils literal notranslate"><span class="pre">next</span></code> 就会从列表中取出下一个值并将其交给用户。每个值都被 <code class="docutils literal notranslate"><span class="pre">Maybe</span></code> 构造器包装以防止这个列表的长度不满足需求。</p>
+<div class="highlight-haskell notranslate"><div class="highlight"><pre><span></span><span class="c1">-- file: ch15/Supply.hs</span>
+<span class="nf">next</span> <span class="ow">::</span> <span class="kt">Supply</span> <span class="n">s</span> <span class="p">(</span><span class="kt">Maybe</span> <span class="n">s</span><span class="p">)</span>
+</pre></div>
+</div>
+<p>为了隐藏我们的管道，在模块声明中我们只导出了类型构造函数，执行函数和 <code class="docutils literal notranslate"><span class="pre">next</span></code> 动作。</p>
+<div class="highlight-haskell notranslate"><div class="highlight"><pre><span></span><span class="c1">-- file: ch15/Supply.hs</span>
+<span class="kr">module</span> <span class="nn">Supply</span>
+        <span class="p">(</span>
+          <span class="kt">Supply</span>
+        <span class="p">,</span> <span class="nf">next</span>
+        <span class="p">,</span> <span class="nf">runSupply</span>
+        <span class="p">)</span> <span class="kr">where</span>
+</pre></div>
+</div>
+<p>因为导入库的模块不能看到 monad 的内部，所以它不能修改我们的库。</p>
+<p>我们的管道非常简单：使用一个 <code class="docutils literal notranslate"><span class="pre">newtype</span></code> 声明来包装现有的 <code class="docutils literal notranslate"><span class="pre">State</span></code> monad。</p>
+<div class="highlight-haskell notranslate"><div class="highlight"><pre><span></span><span class="c1">-- file: ch15/Supply.hs</span>
+<span class="kr">import</span> <span class="nn">Control.Monad.State</span>
+
+<span class="kr">newtype</span> <span class="kt">Supply</span> <span class="n">s</span> <span class="n">a</span> <span class="ow">=</span> <span class="kt">S</span> <span class="p">(</span><span class="kt">State</span> <span class="p">[</span><span class="n">s</span><span class="p">]</span> <span class="n">a</span><span class="p">)</span>
+</pre></div>
+</div>
+<p>参数 <code class="docutils literal notranslate"><span class="pre">s</span></code> 是我们提供的独特值的类型， <code class="docutils literal notranslate"><span class="pre">a</span></code> 是我们必须提供的常见类型参数，以使我们的类型成为 monad。[译注：这里类型 <code class="docutils literal notranslate"><span class="pre">a</span></code> 是自由的，即 <code class="docutils literal notranslate"><span class="pre">a</span></code> 可以是任何东西，以允许 monadic 函数返回任何可能需要的类型。例如 <code class="docutils literal notranslate"><span class="pre">hGetLine</span> <span class="pre">::</span> <span class="pre">Handle</span> <span class="pre">-</span> <span class="pre">&gt;</span> <span class="pre">IO</span> <span class="pre">String</span></code> 这样一个 monadic 函数，给定一个文件句柄，将从它读取一行并返回这一行的内容。这里，<code class="docutils literal notranslate"><span class="pre">String</span></code> 是 IO Monad 要返回的类型 <code class="docutils literal notranslate"><span class="pre">a</span></code> ，程序员可以将 <code class="docutils literal notranslate"><span class="pre">hGetLine</span></code> 看作从句柄读取 String 的函数。]</p>
+<p>我们通过在 <code class="docutils literal notranslate"><span class="pre">Supply</span></code> 类型上应用 <code class="docutils literal notranslate"><span class="pre">newtype</span></code> 以及定义模块头来阻止用户使用 <code class="docutils literal notranslate"><span class="pre">State</span></code> monad 的 <code class="docutils literal notranslate"><span class="pre">get</span></code> 和 <code class="docutils literal notranslate"><span class="pre">set</span></code> 动作。因为我们的模块并不导出 <code class="docutils literal notranslate"><span class="pre">s</span></code> 的构造器，所以用户没有程序化的方式来查看或访问包装在 <code class="docutils literal notranslate"><span class="pre">State</span></code> monad 中的内容。</p>
+<p>现在我们有了一个类型 <code class="docutils literal notranslate"><span class="pre">Supply</span></code> ，接下来需要定义一个 <code class="docutils literal notranslate"><span class="pre">Monad</span></code> 类型类的实例。我们可以遵循通常的方式如 <code class="docutils literal notranslate"><span class="pre">(&gt;&gt;=)</span></code> 和 <code class="docutils literal notranslate"><span class="pre">return</span></code>，但这将变成纯样板代码。我们现在所做的是通过 <code class="docutils literal notranslate"><span class="pre">s</span></code> 值构造器将 <code class="docutils literal notranslate"><span class="pre">State</span></code> monad 版本的 <code class="docutils literal notranslate"><span class="pre">(&gt;&gt;=)</span></code> 及 <code class="docutils literal notranslate"><span class="pre">return</span></code> 包装和展开。代码看起来应该是这个样子：</p>
+<div class="highlight-haskell notranslate"><div class="highlight"><pre><span></span><span class="c1">-- file: ch15/AltSupply.hs</span>
+<span class="nf">unwrapS</span> <span class="ow">::</span> <span class="kt">Supply</span> <span class="n">s</span> <span class="n">a</span> <span class="ow">-&gt;</span> <span class="kt">State</span> <span class="p">[</span><span class="n">s</span><span class="p">]</span> <span class="n">a</span>
+<span class="nf">unwrapS</span> <span class="p">(</span><span class="kt">S</span> <span class="n">s</span><span class="p">)</span> <span class="ow">=</span> <span class="n">s</span>
+
+<span class="kr">instance</span> <span class="kt">Monad</span> <span class="p">(</span><span class="kt">Supply</span> <span class="n">s</span><span class="p">)</span> <span class="kr">where</span>
+        <span class="n">s</span> <span class="o">&gt;&gt;=</span> <span class="n">m</span> <span class="ow">=</span> <span class="kt">S</span> <span class="p">(</span><span class="n">unwrapS</span> <span class="n">s</span> <span class="o">&gt;&gt;=</span> <span class="n">unwrapS</span> <span class="o">.</span> <span class="n">m</span><span class="p">)</span>
+        <span class="n">return</span> <span class="ow">=</span> <span class="kt">S</span> <span class="o">.</span> <span class="n">return</span>
+</pre></div>
+</div>
+<p>Haskell 程序员不喜欢样板，GHC 有一个可爱的语言拓展功能消除了这一工作。我们将以下指令添加到源文件顶部（模块头之前）来使用这一功能。</p>
+<div class="highlight-haskell notranslate"><div class="highlight"><pre><span></span><span class="c1">-- file: ch15/Supply.hs</span>
+<span class="cm">{-# LANGUAGE GeneralizedNewtypeDeriving #-}</span>
+</pre></div>
+</div>
+<p>通常我们只能自动导出一些标准类型类的实例如 <code class="docutils literal notranslate"><span class="pre">Show</span></code> 和 <code class="docutils literal notranslate"><span class="pre">Eq</span></code> 。顾名思义， <code class="docutils literal notranslate"><span class="pre">GeneralizedNewtypeDeriving</span></code> 拓展了我们派生类型类实例的能力，并且它特定于 <code class="docutils literal notranslate"><span class="pre">newtype</span></code> 的声明。通过下面的方式，如果我们包装的类型是任意一个类型类的实例，这个拓展可以自动让我们的新类型成为该类型类的实例。</p>
+<div class="highlight-haskell notranslate"><div class="highlight"><pre><span></span><span class="c1">-- file: ch15/Supply.hs</span>
+        <span class="kr">deriving</span> <span class="p">(</span><span class="kt">Monad</span><span class="p">)</span>
+</pre></div>
+</div>
+<p>[译注：在 GHC 7.10 中， <code class="docutils literal notranslate"><span class="pre">Monad`</span> <span class="pre">是</span> <span class="pre">``Applicative</span></code> 和 <code class="docutils literal notranslate"><span class="pre">Functor</span></code> 的子类，因此上面的 <code class="docutils literal notranslate"><span class="pre">deriving</span></code> 需要改为 <code class="docutils literal notranslate"><span class="pre">deriving(Functor,</span> <span class="pre">Applicative,</span> <span class="pre">Monad)</span></code> 。]</p>
+<p>这需要底层类型实现 <code class="docutils literal notranslate"><span class="pre">(&gt;&gt;=)</span></code> 和 <code class="docutils literal notranslate"><span class="pre">return</span></code> ，通过 <code class="docutils literal notranslate"><span class="pre">s</span></code> 值构造器添加必要的包装和展开方法，并使用这些函数的新版本为我们导出一个 <code class="docutils literal notranslate"><span class="pre">Monad</span></code> 实例。[译注：这里的底层类型指的是 <code class="docutils literal notranslate"><span class="pre">State</span></code> 。]</p>
+<p>我们在这里获得到的远比这个例子来的多。我们可以使用 <code class="docutils literal notranslate"><span class="pre">newtype</span></code> 来包装任何底层类型；我们选择性地只暴露符合我们想法的类型类实例；而且我们几乎没有花费更多的工作来创建这些更恰当、专业的类型。</p>
+<p>现在我们已经看到了 <code class="docutils literal notranslate"><span class="pre">GeneralizedNewtypeDeriving</span></code> 技术，剩下的工作就是提供 <code class="docutils literal notranslate"><span class="pre">next</span></code> 和 <code class="docutils literal notranslate"><span class="pre">runSupply</span></code> 的定义。</p>
+<div class="highlight-haskell notranslate"><div class="highlight"><pre><span></span><span class="c1">-- file: ch15/Supply.hs</span>
+<span class="nf">next</span> <span class="ow">=</span> <span class="kt">S</span> <span class="o">$</span> <span class="kr">do</span> <span class="n">st</span> <span class="ow">&lt;-</span> <span class="n">get</span>
+                          <span class="kr">case</span> <span class="n">st</span> <span class="kr">of</span>
+                                <span class="kt">[]</span> <span class="ow">-&gt;</span> <span class="n">return</span> <span class="kt">Nothing</span>
+                                <span class="p">(</span><span class="n">x</span><span class="kt">:</span><span class="n">xs</span><span class="p">)</span> <span class="ow">-&gt;</span> <span class="kr">do</span> <span class="n">put</span> <span class="n">xs</span>
+                                                         <span class="n">return</span> <span class="p">(</span><span class="kt">Just</span> <span class="n">x</span><span class="p">)</span>
+
+<span class="nf">runSupply</span> <span class="p">(</span><span class="kt">S</span> <span class="n">m</span><span class="p">)</span> <span class="n">xs</span> <span class="ow">=</span> <span class="n">runState</span> <span class="n">m</span> <span class="n">xs</span>
+</pre></div>
+</div>
+<p>我们可以将模块导入 <strong>ghci</strong> ，并用几种简单的方式尝试：</p>
+<div class="highlight-haskell notranslate"><div class="highlight"><pre><span></span><span class="nf">ghci</span><span class="o">&gt;</span> <span class="kt">:</span><span class="n">load</span> <span class="kt">Supply</span>
+<span class="p">[</span><span class="mi">1</span> <span class="kr">of</span> <span class="mi">1</span><span class="p">]</span> <span class="kt">Compiling</span> <span class="kt">Supply</span>           <span class="p">(</span> <span class="kt">Supply</span><span class="o">.</span><span class="n">hs</span><span class="p">,</span> <span class="n">interpreted</span> <span class="p">)</span>
+<span class="kt">Ok</span><span class="p">,</span> <span class="n">modules</span> <span class="n">loaded</span><span class="kt">:</span> <span class="kt">Supply</span><span class="o">.</span>
+<span class="nf">ghci</span><span class="o">&gt;</span> <span class="n">runSupply</span> <span class="n">next</span> <span class="p">[</span><span class="mi">1</span><span class="p">,</span><span class="mi">2</span><span class="p">,</span><span class="mi">3</span><span class="p">]</span>
+<span class="kt">Loading</span> <span class="n">package</span> <span class="n">mtl</span><span class="o">-</span><span class="mf">1.1</span><span class="o">.</span><span class="mf">0.0</span> <span class="o">...</span> <span class="n">linking</span> <span class="o">...</span> <span class="n">done</span><span class="o">.</span>
+<span class="p">(</span><span class="kt">Just</span> <span class="mi">1</span><span class="p">,[</span><span class="mi">2</span><span class="p">,</span><span class="mi">3</span><span class="p">])</span>
+<span class="nf">ghci</span><span class="o">&gt;</span> <span class="n">runSupply</span> <span class="p">(</span><span class="n">liftM2</span> <span class="p">(,)</span> <span class="n">next</span> <span class="n">next</span><span class="p">)</span> <span class="p">[</span><span class="mi">1</span><span class="p">,</span><span class="mi">2</span><span class="p">,</span><span class="mi">3</span><span class="p">]</span>
+<span class="p">((</span><span class="kt">Just</span> <span class="mi">1</span><span class="p">,</span><span class="kt">Just</span> <span class="mi">2</span><span class="p">),[</span><span class="mi">3</span><span class="p">])</span>
+<span class="nf">ghci</span><span class="o">&gt;</span> <span class="n">runSupply</span> <span class="p">(</span><span class="n">liftM2</span> <span class="p">(,)</span> <span class="n">next</span> <span class="n">next</span><span class="p">)</span> <span class="p">[</span><span class="mi">1</span><span class="p">]</span>
+<span class="p">((</span><span class="kt">Just</span> <span class="mi">1</span><span class="p">,</span><span class="kt">Nothing</span><span class="p">),</span><span class="kt">[]</span><span class="p">)</span>
+</pre></div>
+</div>
+<p>我们也可以验证 <code class="docutils literal notranslate"><span class="pre">State</span></code> monad 是否以某种方式泄露。</p>
+<div class="highlight-haskell notranslate"><div class="highlight"><pre><span></span><span class="nf">ghci</span><span class="o">&gt;</span> <span class="kt">:</span><span class="n">browse</span> <span class="kt">Supply</span>
+<span class="kr">data</span> <span class="kt">Supply</span> <span class="n">s</span> <span class="n">a</span>
+<span class="nf">next</span> <span class="ow">::</span> <span class="kt">Supply</span> <span class="n">s</span> <span class="p">(</span><span class="kt">Maybe</span> <span class="n">s</span><span class="p">)</span>
+<span class="nf">runSupply</span> <span class="ow">::</span> <span class="kt">Supply</span> <span class="n">s</span> <span class="n">a</span> <span class="ow">-&gt;</span> <span class="p">[</span><span class="n">s</span><span class="p">]</span> <span class="ow">-&gt;</span> <span class="p">(</span><span class="n">a</span><span class="p">,</span> <span class="p">[</span><span class="n">s</span><span class="p">])</span>
+<span class="nf">ghci</span><span class="o">&gt;</span> <span class="kt">:</span><span class="n">info</span> <span class="kt">Supply</span>
+<span class="kr">data</span> <span class="kt">Supply</span> <span class="n">s</span> <span class="n">a</span>         <span class="c1">-- Defined at Supply.hs:17:8-13</span>
+<span class="kr">instance</span> <span class="kt">Monad</span> <span class="p">(</span><span class="kt">Supply</span> <span class="n">s</span><span class="p">)</span> <span class="c1">-- Defined at Supply.hs:17:8-13</span>
+</pre></div>
+</div>
+<section id="supplying-random-numbers">
+<span id="id6"></span><h3>提供随机数<a class="headerlink" href="#supplying-random-numbers" title="Permalink to this headline">¶</a></h3>
+<p>如果我们想使用 <code class="docutils literal notranslate"><span class="pre">Supply</span></code> monad 作为随机数的源，那么有一些小困难需要克服。理想情况下，我们希望能为它提供一个无限的随机数流。我们可以在 <code class="docutils literal notranslate"><span class="pre">IO</span></code> monad 中获得一个 <code class="docutils literal notranslate"><span class="pre">StdGen</span></code> ，但完成后必须 “放回” 一个不同的 <code class="docutils literal notranslate"><span class="pre">StdGen</span></code> 。假如我们不这么做，下一段代码得到的 <code class="docutils literal notranslate"><span class="pre">StdGen</span></code> 将获得与之前相同的状态。这意味着它将产生与此前相同的随机数，这样的结果可能是灾难性的。</p>
+<p>目前为止我们所看到的 <code class="docutils literal notranslate"><span class="pre">System.Random</span></code> 模块很难满足这些要求。我们可以使用 <code class="docutils literal notranslate"><span class="pre">getStdRandom</span></code> ，它的类型确保了我们可以同时得到和放回一个 <code class="docutils literal notranslate"><span class="pre">StdGen</span></code> 。</p>
+<p>我们可以使用 <code class="docutils literal notranslate"><span class="pre">random</span></code> 在获取一个随机数的同时得到一个新的 <code class="docutils literal notranslate"><span class="pre">StdGen</span></code> 。我们可以用 <code class="docutils literal notranslate"><span class="pre">randoms</span></code> 获取一个无限的随机数列表。但我们如何同时得到一个无限的随机数列表和一个新的 <code class="docutils literal notranslate"><span class="pre">StdGen</span></code>？</p>
+<p>答案在于 <code class="docutils literal notranslate"><span class="pre">RandomGen</span></code> 类型类的拆分函数。它接受一个随机数生成器，并将其转换为两个生成器。能够分裂这样的随机生成器是一件很不寻常的事，它在纯函数的设定中显然非常有用，但对于非纯函数语言基本不需要。[译注： <code class="docutils literal notranslate"><span class="pre">stdSplit</span></code> 的统计基础较差，如果随机数的质量很重要，应当尽量避免不必要的分割。]</p>
+<p>通过使用 <code class="docutils literal notranslate"><span class="pre">split</span></code> 函数，我们可以用一个 <code class="docutils literal notranslate"><span class="pre">StdGen</span></code> 来生成一个无限长的随机数列表并将其交付 <code class="docutils literal notranslate"><span class="pre">runSupply</span></code> ，同时将另一个 <code class="docutils literal notranslate"><span class="pre">StdGen</span></code> 返还给 <code class="docutils literal notranslate"><span class="pre">IO</span></code> monad。</p>
+<div class="highlight-haskell notranslate"><div class="highlight"><pre><span></span><span class="c1">-- file: ch15/RandomSupply.hs</span>
+<span class="kr">import</span> <span class="nn">Supply</span>
+<span class="kr">import</span> <span class="nn">System.Random</span> <span class="k">hiding</span> <span class="p">(</span><span class="nf">next</span><span class="p">)</span>
+
+<span class="nf">randomsIO</span> <span class="ow">::</span> <span class="kt">Random</span> <span class="n">a</span> <span class="ow">=&gt;</span> <span class="kt">IO</span> <span class="p">[</span><span class="n">a</span><span class="p">]</span>
+<span class="nf">randomsIO</span> <span class="ow">=</span>
+        <span class="n">getStdRandom</span> <span class="o">$</span> <span class="nf">\</span><span class="n">g</span> <span class="ow">-&gt;</span>
+                <span class="kr">let</span> <span class="p">(</span><span class="n">a</span><span class="p">,</span> <span class="n">b</span><span class="p">)</span> <span class="ow">=</span> <span class="n">split</span> <span class="n">g</span>
+                <span class="kr">in</span> <span class="p">(</span><span class="n">randoms</span> <span class="n">a</span><span class="p">,</span> <span class="n">b</span><span class="p">)</span>
+</pre></div>
+</div>
+<p>如果我们正确的书写了这个函数，我们的例子应该在每次调用时打印一个不同的随机数。</p>
+<div class="highlight-haskell notranslate"><div class="highlight"><pre><span></span><span class="nf">ghci</span><span class="o">&gt;</span> <span class="kt">:</span><span class="n">load</span> <span class="kt">RandomSupply</span>
+<span class="p">[</span><span class="mi">1</span> <span class="kr">of</span> <span class="mi">2</span><span class="p">]</span> <span class="kt">Compiling</span> <span class="kt">Supply</span>           <span class="p">(</span> <span class="kt">Supply</span><span class="o">.</span><span class="n">hs</span><span class="p">,</span> <span class="n">interpreted</span> <span class="p">)</span>
+<span class="p">[</span><span class="mi">2</span> <span class="kr">of</span> <span class="mi">2</span><span class="p">]</span> <span class="kt">Compiling</span> <span class="kt">RandomSupply</span>     <span class="p">(</span> <span class="kt">RandomSupply</span><span class="o">.</span><span class="n">hs</span><span class="p">,</span> <span class="n">interpreted</span> <span class="p">)</span>
+<span class="kt">Ok</span><span class="p">,</span> <span class="n">modules</span> <span class="n">loaded</span><span class="kt">:</span> <span class="kt">RandomSupply</span><span class="p">,</span> <span class="kt">Supply</span><span class="o">.</span>
+<span class="nf">ghci</span><span class="o">&gt;</span> <span class="p">(</span><span class="n">fst</span> <span class="o">.</span> <span class="n">runSupply</span> <span class="n">next</span><span class="p">)</span> <span class="p">`</span><span class="n">fmap</span><span class="p">`</span> <span class="n">randomsIO</span>
+
+<span class="o">&lt;</span><span class="n">interactive</span><span class="o">&gt;:</span><span class="mi">1</span><span class="kt">:</span><span class="mi">17</span><span class="kt">:</span>
+        <span class="kt">Ambiguous</span> <span class="n">occurrence</span> <span class="p">`</span><span class="n">next&#39;</span>
+        <span class="kt">It</span> <span class="n">could</span> <span class="n">refer</span> <span class="n">to</span> <span class="n">either</span> <span class="p">`</span><span class="kt">Supply</span><span class="o">.</span><span class="n">next&#39;</span><span class="p">,</span> <span class="n">imported</span> <span class="n">from</span> <span class="kt">Supply</span> <span class="n">at</span> <span class="kt">RandomSupply</span><span class="o">.</span><span class="n">hs</span><span class="kt">:</span><span class="mi">4</span><span class="kt">:</span><span class="mi">0</span><span class="o">-</span><span class="mi">12</span>
+                                                                                          <span class="p">(</span><span class="n">defined</span> <span class="n">at</span> <span class="kt">Supply</span><span class="o">.</span><span class="n">hs</span><span class="kt">:</span><span class="mi">32</span><span class="kt">:</span><span class="mi">0</span><span class="p">)</span>
+                                                  <span class="n">or</span> <span class="p">`</span><span class="kt">System</span><span class="o">.</span><span class="kt">Random</span><span class="o">.</span><span class="n">next&#39;</span><span class="p">,</span> <span class="n">imported</span> <span class="n">from</span> <span class="kt">System</span><span class="o">.</span><span class="kt">Random</span>
+<span class="nf">ghci</span><span class="o">&gt;</span> <span class="p">(</span><span class="n">fst</span> <span class="o">.</span> <span class="n">runSupply</span> <span class="n">next</span><span class="p">)</span> <span class="p">`</span><span class="n">fmap</span><span class="p">`</span> <span class="n">randomsIO</span>
+
+<span class="o">&lt;</span><span class="n">interactive</span><span class="o">&gt;:</span><span class="mi">1</span><span class="kt">:</span><span class="mi">17</span><span class="kt">:</span>
+        <span class="kt">Ambiguous</span> <span class="n">occurrence</span> <span class="p">`</span><span class="n">next&#39;</span>
+        <span class="kt">It</span> <span class="n">could</span> <span class="n">refer</span> <span class="n">to</span> <span class="n">either</span> <span class="p">`</span><span class="kt">Supply</span><span class="o">.</span><span class="n">next&#39;</span><span class="p">,</span> <span class="n">imported</span> <span class="n">from</span> <span class="kt">Supply</span> <span class="n">at</span> <span class="kt">RandomSupply</span><span class="o">.</span><span class="n">hs</span><span class="kt">:</span><span class="mi">4</span><span class="kt">:</span><span class="mi">0</span><span class="o">-</span><span class="mi">12</span>
+                                                                                          <span class="p">(</span><span class="n">defined</span> <span class="n">at</span> <span class="kt">Supply</span><span class="o">.</span><span class="n">hs</span><span class="kt">:</span><span class="mi">32</span><span class="kt">:</span><span class="mi">0</span><span class="p">)</span>
+                                                  <span class="n">or</span> <span class="p">`</span><span class="kt">System</span><span class="o">.</span><span class="kt">Random</span><span class="o">.</span><span class="n">next&#39;</span><span class="p">,</span> <span class="n">imported</span> <span class="n">from</span> <span class="kt">System</span><span class="o">.</span><span class="kt">Random</span>
+</pre></div>
+</div>
+<div class="admonition warning">
+<p class="admonition-title">Warning</p>
+<p>[译注：此处保留了原著中的错误，原著执行的代码中可能丢失了 <code class="docutils literal notranslate"><span class="pre">hiding</span> <span class="pre">(next)</span></code> ，因此产生歧义。下面给出正确情况下的某次执行结果。]</p>
+<div class="highlight-haskell notranslate"><div class="highlight"><pre><span></span><span class="nf">ghci</span><span class="o">&gt;</span> <span class="kt">:</span><span class="n">load</span> <span class="kt">RandomSupply</span>
+<span class="p">[</span><span class="mi">1</span> <span class="kr">of</span> <span class="mi">2</span><span class="p">]</span> <span class="kt">Compiling</span> <span class="kt">Supply</span>           <span class="p">(</span> <span class="kt">Supply</span><span class="o">.</span><span class="n">hs</span><span class="p">,</span> <span class="n">interpreted</span> <span class="p">)</span>
+<span class="p">[</span><span class="mi">2</span> <span class="kr">of</span> <span class="mi">2</span><span class="p">]</span> <span class="kt">Compiling</span> <span class="kt">Main</span>             <span class="p">(</span> <span class="kt">RandomSupply</span><span class="o">.</span><span class="n">hs</span><span class="p">,</span> <span class="n">interpreted</span> <span class="p">)</span>
+<span class="kt">Ok</span><span class="p">,</span> <span class="n">modules</span> <span class="n">loaded</span><span class="kt">:</span> <span class="kt">Supply</span><span class="p">,</span> <span class="kt">Main</span><span class="o">.</span>
+<span class="nf">ghci</span><span class="o">&gt;</span> <span class="p">(</span><span class="n">fst</span> <span class="o">.</span> <span class="n">runSupply</span> <span class="n">next</span><span class="p">)</span> <span class="p">`</span><span class="n">fmap</span><span class="p">`</span> <span class="n">randomsIO</span>
+<span class="kt">Just</span> <span class="p">(</span><span class="o">-</span><span class="mi">54705384517081531</span><span class="p">)</span>
+<span class="nf">ghci</span><span class="o">&gt;</span> <span class="p">(</span><span class="n">fst</span> <span class="o">.</span> <span class="n">runSupply</span> <span class="n">next</span><span class="p">)</span> <span class="p">`</span><span class="n">fmap</span><span class="p">`</span> <span class="n">randomsIO</span>
+<span class="kt">Just</span> <span class="p">(</span><span class="o">-</span><span class="mi">2652939136952789000</span><span class="p">)</span>
+<span class="nf">ghci</span><span class="o">&gt;</span> <span class="p">(</span><span class="n">fst</span> <span class="o">.</span> <span class="n">runSupply</span> <span class="n">next</span><span class="p">)</span> <span class="p">`</span><span class="n">fmap</span><span class="p">`</span> <span class="n">randomsIO</span>
+<span class="kt">Just</span> <span class="p">(</span><span class="o">-</span><span class="mi">5089130856647223466</span><span class="p">)</span>
+</pre></div>
+</div>
+</div>
+<p>回想一下，我们的 <code class="docutils literal notranslate"><span class="pre">runSupply</span></code> 函数同时返回执行 monadic 操作的结果和列表的剩余部分。因为我们传递了一个无限的随机数列表，所以这里用 <code class="docutils literal notranslate"><span class="pre">fst</span></code> 来组合，以保证当 <strong>ghci</strong> 尝试打印结果时不会被随机数淹没。</p>
+</section>
+<section id="another-round-of-golf">
+<span id="id7"></span><h3>另一轮高尔夫训练<a class="headerlink" href="#another-round-of-golf" title="Permalink to this headline">¶</a></h3>
+<p>这种将函数应用在一对元素的其中一个元素上，并且与另一个未被修改的原始元素构成新对的模式在 Haskell 代码中已经非常普遍，它已经成为了一种标准代码。</p>
+<p>在 <code class="docutils literal notranslate"><span class="pre">Control.Arrow</span></code> 模块中有两个函数 <code class="docutils literal notranslate"><span class="pre">first</span></code> 和 <code class="docutils literal notranslate"><span class="pre">second</span></code> ，它们执行这个操作。</p>
+<div class="highlight-haskell notranslate"><div class="highlight"><pre><span></span><span class="nf">ghci</span><span class="o">&gt;</span> <span class="kt">:</span><span class="n">m</span> <span class="o">+</span><span class="kt">Control</span><span class="o">.</span><span class="kt">Arrow</span>
+<span class="nf">ghci</span><span class="o">&gt;</span> <span class="n">first</span> <span class="p">(</span><span class="o">+</span><span class="mi">3</span><span class="p">)</span> <span class="p">(</span><span class="mi">1</span><span class="p">,</span><span class="mi">2</span><span class="p">)</span>
+<span class="p">(</span><span class="mi">4</span><span class="p">,</span><span class="mi">2</span><span class="p">)</span>
+<span class="nf">ghci</span><span class="o">&gt;</span> <span class="n">second</span> <span class="n">odd</span> <span class="p">(</span><span class="sc">&#39;a&#39;</span><span class="p">,</span><span class="mi">1</span><span class="p">)</span>
+<span class="p">(</span><span class="sc">&#39;a&#39;</span><span class="p">,</span><span class="kt">True</span><span class="p">)</span>
+</pre></div>
+</div>
+<p>（事实上我们已经在 <a class="reference internal" href="6.html#json-typeclasses-without-overlapping-instances"><span class="std std-ref">JSON类型类,不带有重叠实例</span></a> 中遇到过 <code class="docutils literal notranslate"><span class="pre">second</span></code> 了。）我们可以使用 <code class="docutils literal notranslate"><span class="pre">first</span></code> 来产生我们自己 <code class="docutils literal notranslate"><span class="pre">randomsIO</span></code> 的定义，将其转化为单线形式。</p>
+<div class="highlight-haskell notranslate"><div class="highlight"><pre><span></span><span class="c1">-- file: ch15/RandomGolf.hs</span>
+<span class="kr">import</span> <span class="nn">Control.Arrow</span> <span class="p">(</span><span class="nf">first</span><span class="p">)</span>
+
+<span class="nf">randomsIO_golfed</span> <span class="ow">::</span> <span class="kt">Random</span> <span class="n">a</span> <span class="ow">=&gt;</span> <span class="kt">IO</span> <span class="p">[</span><span class="n">a</span><span class="p">]</span>
+<span class="nf">randomsIO_golfed</span> <span class="ow">=</span> <span class="n">getStdRandom</span> <span class="p">(</span><span class="n">first</span> <span class="n">randoms</span> <span class="o">.</span> <span class="n">split</span><span class="p">)</span>
+</pre></div>
+</div>
+</section>
+</section>
+<section id="separating-interface-from-implementation">
+<span id="id8"></span><h2>将接口与实现分离<a class="headerlink" href="#separating-interface-from-implementation" title="Permalink to this headline">¶</a></h2>
+<p>在前面的章节中，我们看到了如何向用户隐藏我们在内部使用 <code class="docutils literal notranslate"><span class="pre">State</span></code> monad 来保持 <code class="docutils literal notranslate"><span class="pre">Supply</span></code> monad状态的事实。</p>
+<p>使代码更加模块化的另一个重要方式是将接口（代码可以做什么）从实现（代码具体如何做）中分离出来。</p>
+<p>众所周知，标准的随机数生成器 <code class="docutils literal notranslate"><span class="pre">System.Random</span></code> 速度很慢。如果使用我们的 <code class="docutils literal notranslate"><span class="pre">randomsIO</span></code> 函数为它提供随机数，那么我们的 <code class="docutils literal notranslate"><span class="pre">next</span></code> 动作执行效果将不会很好。</p>
+<p>一个简单有效的解决办法是为 <code class="docutils literal notranslate"><span class="pre">Supply</span></code> 提供一个更好的随机数源，但现在让我们把这个方法先放到一边，转而考虑一种在许多设定中都有效的替代方法。我们将使用一个类型类，对 monad 的行为和实现进行分离。</p>
+<div class="highlight-haskell notranslate"><div class="highlight"><pre><span></span><span class="c1">-- file: ch15/SupplyClass.hs</span>
+<span class="kr">class</span> <span class="p">(</span><span class="kt">Monad</span> <span class="n">m</span><span class="p">)</span> <span class="ow">=&gt;</span> <span class="kt">MonadSupply</span> <span class="n">s</span> <span class="n">m</span> <span class="o">|</span> <span class="n">m</span> <span class="ow">-&gt;</span> <span class="n">s</span> <span class="kr">where</span>
+        <span class="n">next</span> <span class="ow">::</span> <span class="n">m</span> <span class="p">(</span><span class="kt">Maybe</span> <span class="n">s</span><span class="p">)</span>
+</pre></div>
+</div>
+<p>这个类型类定义了任何 <code class="docutils literal notranslate"><span class="pre">Supply</span></code> monad 都必须实现的接口。因为这个类型类使用了几个我们尚不熟悉的 Haskell 语言扩展，所以我们需要对这个类型类进行详细的分析，它涉及的各个扩展将在接下来的小节中介绍。</p>
+<section id="multi-parameter-typeclasses">
+<span id="id9"></span><h3>多参数类型类<a class="headerlink" href="#multi-parameter-typeclasses" title="Permalink to this headline">¶</a></h3>
+<p>我们应该如何读取类型类中的代码片段 <code class="docutils literal notranslate"><span class="pre">MonadSupply</span> <span class="pre">s</span> <span class="pre">m</span></code> ？如果我们添加括号，则等价表达式是 <code class="docutils literal notranslate"><span class="pre">(</span> <span class="pre">MonadSupply</span> <span class="pre">s</span> <span class="pre">)</span> <span class="pre">m</span></code> ，它看起来更清晰一些。换句话说，给定一些 <code class="docutils literal notranslate"><span class="pre">Monad</span></code> 类型变量 <code class="docutils literal notranslate"><span class="pre">m</span></code> ，我们可以让它成为类型类 <code class="docutils literal notranslate"><span class="pre">MonadSupply</span> <span class="pre">s</span></code> 的一个实例。与常规类型类不同，这里的类型类有一个参数。 [译注： <a class="reference external" href="http://www.haskell.org/ghc/docs/7.6-latest/html/users_guide/type-class-extensions.html#functional-dependencies">此链接</a> 可能会帮助你更好地理解功能依赖及多参数类型类。实际上，上面给出的例子中， <code class="docutils literal notranslate"><span class="pre">s</span></code> 和 <code class="docutils literal notranslate"><span class="pre">m</span></code> 仅仅是两个参数，它们的位置可以互换。原作者通过加括号的方式，将其理解为一个参数和另一个有参数的类型类，也许在数学上正确，但译者认为此处可能导致读者的困惑。]</p>
+<p>这个语言扩展被称作 <code class="docutils literal notranslate"><span class="pre">MultiParamTypeClasses</span></code> ，因为它允许类型类有多个参数。参数 <code class="docutils literal notranslate"><span class="pre">s</span></code> 的作用与 <code class="docutils literal notranslate"><span class="pre">Supply</span></code> 类型的参数相同：它代表了 <code class="docutils literal notranslate"><span class="pre">next</span></code> 动作发出的值。</p>
+<p>注意，我们不需要在 <code class="docutils literal notranslate"><span class="pre">MonadSupply</span> <span class="pre">s</span></code> 的定义中提到 <code class="docutils literal notranslate"><span class="pre">(&gt;&gt;=)</span></code> 或 <code class="docutils literal notranslate"><span class="pre">return</span></code> ，因为类型类的上下文（超类）要求 <code class="docutils literal notranslate"><span class="pre">MonadSupply</span> <span class="pre">s</span></code> 必须已经是一个 <code class="docutils literal notranslate"><span class="pre">Monad</span></code> 。</p>
+</section>
+<section id="functional-dependencies">
+<span id="id11"></span><h3>功能依赖<a class="headerlink" href="#functional-dependencies" title="Permalink to this headline">¶</a></h3>
+<p>现在让我们回头看之前被忽略的代码段， <code class="docutils literal notranslate"><span class="pre">|</span> <span class="pre">m</span> <span class="pre">-&gt;</span> <span class="pre">s</span></code> 是一个功能依赖，通常被称作 <code class="docutils literal notranslate"><span class="pre">fundep</span></code> 。我们可以将竖线 <code class="docutils literal notranslate"><span class="pre">|</span></code> 读作 “这样”，将箭头 <code class="docutils literal notranslate"><span class="pre">-&gt;</span></code> 读作“唯一确定”。我们的功能依赖建立了 <code class="docutils literal notranslate"><span class="pre">m</span></code> 和 <code class="docutils literal notranslate"><span class="pre">s</span></code> 之间的关系。</p>
+<p>功能依赖由 <code class="docutils literal notranslate"><span class="pre">FunctionalDependencies</span></code> 语言编译指令管理。</p>
+<p>我们声明 <code class="docutils literal notranslate"><span class="pre">m</span></code> 和 <code class="docutils literal notranslate"><span class="pre">s</span></code> 之间关系的目的是帮助类型检查器。回想一下，Haskell类型检查器本质上是一个定理证明器，并且它在操作上是保守的：它坚持这个证明过程必须终止。一个非终止的证明结果将导致编译器放弃或陷入无限循环。</p>
+<p>通过功能依赖，我们告诉类型检查器，一旦它看到一些 monad <code class="docutils literal notranslate"><span class="pre">m</span></code> 在 <code class="docutils literal notranslate"><span class="pre">MonadSupply</span> <span class="pre">s</span></code> 的上下文中被使用，那么类型 <code class="docutils literal notranslate"><span class="pre">s</span></code> 就是唯一可以接受的类型。假如我们省略功能依赖，类型检查器就会放弃并返回一个错误消息。</p>
+<p>我们很难描述 <code class="docutils literal notranslate"><span class="pre">m</span></code> 和 <code class="docutils literal notranslate"><span class="pre">s</span></code> 之间的关系究竟是什么，所以让我们来看一个该类型类具体的实例。</p>
+<div class="highlight-haskell notranslate"><div class="highlight"><pre><span></span><span class="c1">-- file: ch15/SupplyClass.hs</span>
+<span class="kr">import</span> <span class="k">qualified</span> <span class="nn">Supply</span> <span class="k">as</span> <span class="n">S</span>
+
+<span class="kr">instance</span> <span class="kt">MonadSupply</span> <span class="n">s</span> <span class="p">(</span><span class="kt">S</span><span class="o">.</span><span class="kt">Supply</span> <span class="n">s</span><span class="p">)</span> <span class="kr">where</span>
+        <span class="n">next</span> <span class="ow">=</span> <span class="kt">S</span><span class="o">.</span><span class="n">next</span>
+</pre></div>
+</div>
+<p>这里，类型变量 <code class="docutils literal notranslate"><span class="pre">m</span></code> 由类型 <code class="docutils literal notranslate"><span class="pre">S.Supply</span> <span class="pre">s</span></code> 替换。因为功能依赖的存在，类型检查器知道当它看到类型 <code class="docutils literal notranslate"><span class="pre">S.Supply</span> <span class="pre">s</span></code> 时， 这个类型可以被当作类型类 <code class="docutils literal notranslate"><span class="pre">MonadSupply</span> <span class="pre">s</span></code> 的实例来使用。</p>
+<p>假如没有功能依赖，类型检查器不会发现 <code class="docutils literal notranslate"><span class="pre">MonadSupply</span> <span class="pre">s</span></code> 和 <code class="docutils literal notranslate"><span class="pre">Supply</span> <span class="pre">s</span></code> 二者类型参数之间的关系，因此它将终止编译并产生一个错误。它们的定义本身将会编译，而类型错误直到我们尝试使用它的时候才会产生。</p>
+<p>下面我们用一个例子剥离最后一层抽象：考虑类型 <code class="docutils literal notranslate"><span class="pre">S.Supply</span> <span class="pre">Int</span></code> 。我们可以不使用功能依赖而将其声明为 <code class="docutils literal notranslate"><span class="pre">MonadSupply</span> <span class="pre">s</span></code> 的一个实例。但是假如我们试图使用这个实例编写代码，编译器将无法得知类型的 <code class="docutils literal notranslate"><span class="pre">Int</span></code> 参数需要和类型类 <code class="docutils literal notranslate"><span class="pre">s</span></code> 的参数相同，因此它将报告一个错误。</p>
+<p>功能依赖可能难以理解，并且它们被证明在实践中通常很难使用。幸运的是，功能依赖一般在和我们例子类似的简单情况下使用，此时它们不会导致什么麻烦。</p>
+</section>
+<section id="rounding-out-our-module">
+<span id="id12"></span><h3>舍入模块<a class="headerlink" href="#rounding-out-our-module" title="Permalink to this headline">¶</a></h3>
+<p>假如我们将类型类和实例保存在名为 <code class="docutils literal notranslate"><span class="pre">SupplyClass.hs</span></code> 的源文件中，那么就需要在文件中添加一个类似这样的模块头：</p>
+<div class="highlight-haskell notranslate"><div class="highlight"><pre><span></span><span class="c1">-- file: ch15/SupplyClass.hs</span>
+<span class="cm">{-# LANGUAGE FlexibleInstances, FunctionalDependencies,</span>
+<span class="cm">                         MultiParamTypeClasses #-}</span>
+
+<span class="kr">module</span> <span class="nn">SupplyClass</span>
+        <span class="p">(</span>
+          <span class="kt">MonadSupply</span><span class="p">(</span><span class="o">..</span><span class="p">)</span>
+        <span class="p">,</span> <span class="kt">S</span><span class="o">.</span><span class="kt">Supply</span>
+        <span class="p">,</span> <span class="kt">S</span><span class="o">.</span><span class="nf">runSupply</span>
+        <span class="p">)</span> <span class="kr">where</span>
+</pre></div>
+</div>
+<p>这个 <code class="docutils literal notranslate"><span class="pre">FlexibleInstances</span></code> 扩展是必须的，否则编译器不会接受我们的实例声明。这个扩展放宽了在某些情况下书写实例的一般规则，但同时仍然让编译器的类型检查器保证它的推导会结束。我们这里需要 <code class="docutils literal notranslate"><span class="pre">FlexibleInstances</span></code> 的原因是我们使用了功能依赖，具体的细节超过了本书所讨论的范畴。</p>
+<div class="admonition note">
+<p class="admonition-title">Note</p>
+<p>如何知道是否需要一个语言扩展</p>
+<p>假如 GHC 因为需要启用某些语言扩展而不能编译一段代码，它会提醒我们哪些扩展需要使用。比如，假如它认为我们的代码需要 flexible 的实例支持，它将提醒我们使用 <code class="docutils literal notranslate"><span class="pre">-XFlexibleInstances</span></code> 选项编译。 <code class="docutils literal notranslate"><span class="pre">-x</span></code> 选项和 <code class="docutils literal notranslate"><span class="pre">LANGUAGE</span></code> 伪指令具有相同的效果：它们都可以启用一个特定的扩展。</p>
+</div>
+<p>最后，请注意我们正在从此模块中重新导出 <code class="docutils literal notranslate"><span class="pre">runSupply</span></code> 和 <code class="docutils literal notranslate"><span class="pre">Supply</span></code> 的名称。从一个模块中导出名称是完全合法的，即使它在另一个模块中被定义。在我们的例子中，这意味着客户端代码只需要导入 <code class="docutils literal notranslate"><span class="pre">SupplyClass</span></code> 模块，而不需要导入 <code class="docutils literal notranslate"><span class="pre">Supply</span></code> 模块。这减少了用户需要记住的 “移动部件” 的数量。</p>
+</section>
+<section id="programming-to-a-monads-interface">
+<span id="id13"></span><h3>对 monad 接口编程<a class="headerlink" href="#programming-to-a-monads-interface" title="Permalink to this headline">¶</a></h3>
+<p>下面是一个简单的函数，它从我们的 <code class="docutils literal notranslate"><span class="pre">Supply</span></code> monad 中获取两个值，将它们格式化为字符串，并返回它们。</p>
+<div class="highlight-haskell notranslate"><div class="highlight"><pre><span></span><span class="c1">-- file: ch15/Supply.hs</span>
+<span class="nf">showTwo</span> <span class="ow">::</span> <span class="p">(</span><span class="kt">Show</span> <span class="n">s</span><span class="p">)</span> <span class="ow">=&gt;</span> <span class="kt">Supply</span> <span class="n">s</span> <span class="kt">String</span>
+<span class="nf">showTwo</span> <span class="ow">=</span> <span class="kr">do</span>
+  <span class="n">a</span> <span class="ow">&lt;-</span> <span class="n">next</span>
+  <span class="n">b</span> <span class="ow">&lt;-</span> <span class="n">next</span>
+  <span class="n">return</span> <span class="p">(</span><span class="n">show</span> <span class="s">&quot;a: &quot;</span> <span class="o">++</span> <span class="n">show</span> <span class="n">a</span> <span class="o">++</span> <span class="s">&quot;, b: &quot;</span> <span class="o">++</span> <span class="n">show</span> <span class="n">b</span><span class="p">)</span>
+</pre></div>
+</div>
+<p>这份代码通过它的结果类型绑定到我们的 <code class="docutils literal notranslate"><span class="pre">Supply</span></code> monad。通过修改函数类型，我们可以在维持函数主体不变的情况下，将此方法推广至所有实现了 <code class="docutils literal notranslate"><span class="pre">MonadSupply</span></code> 接口的 monad。</p>
+<div class="highlight-haskell notranslate"><div class="highlight"><pre><span></span><span class="c1">-- file: ch15/SupplyClass.hs</span>
+<span class="nf">showTwo_class</span> <span class="ow">::</span> <span class="p">(</span><span class="kt">Show</span> <span class="n">s</span><span class="p">,</span> <span class="kt">Monad</span> <span class="n">m</span><span class="p">,</span> <span class="kt">MonadSupply</span> <span class="n">s</span> <span class="n">m</span><span class="p">)</span> <span class="ow">=&gt;</span> <span class="n">m</span> <span class="kt">String</span>
+<span class="nf">showTwo_class</span> <span class="ow">=</span> <span class="kr">do</span>
+  <span class="n">a</span> <span class="ow">&lt;-</span> <span class="n">next</span>
+  <span class="n">b</span> <span class="ow">&lt;-</span> <span class="n">next</span>
+  <span class="n">return</span> <span class="p">(</span><span class="n">show</span> <span class="s">&quot;a: &quot;</span> <span class="o">++</span> <span class="n">show</span> <span class="n">a</span> <span class="o">++</span> <span class="s">&quot;, b: &quot;</span> <span class="o">++</span> <span class="n">show</span> <span class="n">b</span><span class="p">)</span>
+</pre></div>
+</div>
+</section>
+</section>
+<section id="reader-monad">
+<span id="the-reader-monad"></span><h2>Reader monad<a class="headerlink" href="#reader-monad" title="Permalink to this headline">¶</a></h2>
+<p><code class="docutils literal notranslate"><span class="pre">State</span></code> monad 让我们通过代码传递了一些可变状态。有时，我们希望能够传递一些不可变的状态，比如程序的配置数据。在这种情况下我们仍可以使用 <code class="docutils literal notranslate"><span class="pre">State</span></code> monad ，但这种做法有时候可能会错误地修改了不可变的数据。</p>
+<p>让我们暂时忘记 monad 。考虑一个能满足我们要求的函数，它应当具有什么行为？它应当接收一个类型为 <code class="docutils literal notranslate"><span class="pre">e</span></code> （根据环境而定）的值，该值携带了我们要传入的数据；它应当返回一个其它类型 <code class="docutils literal notranslate"><span class="pre">a</span></code> 的值作为结果。我们希望整个函数的类型签名为 <code class="docutils literal notranslate"><span class="pre">e</span> <span class="pre">-&gt;</span> <span class="pre">a</span></code> 。</p>
+<p>为了将这个类型转化为一个方便的 <code class="docutils literal notranslate"><span class="pre">Monad</span></code> 实例，我们用一个 <code class="docutils literal notranslate"><span class="pre">newtype</span></code> 包装它。</p>
+<div class="highlight-haskell notranslate"><div class="highlight"><pre><span></span><span class="c1">-- file: ch15/SupplyInstance.hs</span>
+<span class="kr">newtype</span> <span class="kt">Reader</span> <span class="n">e</span> <span class="n">a</span> <span class="ow">=</span> <span class="kt">R</span> <span class="p">{</span> <span class="n">runReader</span> <span class="ow">::</span> <span class="n">e</span> <span class="ow">-&gt;</span> <span class="n">a</span> <span class="p">}</span>
+</pre></div>
+</div>
+<p>很容易将它转化为 <code class="docutils literal notranslate"><span class="pre">Monad</span></code> 实例。</p>
+<div class="highlight-haskell notranslate"><div class="highlight"><pre><span></span><span class="c1">-- file: ch15/SupplyInstance.hs</span>
+<span class="kr">instance</span> <span class="kt">Monad</span> <span class="p">(</span><span class="kt">Reader</span> <span class="n">e</span><span class="p">)</span> <span class="kr">where</span>
+        <span class="n">return</span> <span class="n">a</span> <span class="ow">=</span> <span class="kt">R</span> <span class="o">$</span> <span class="nf">\</span><span class="kr">_</span> <span class="ow">-&gt;</span> <span class="n">a</span>
+        <span class="n">m</span> <span class="o">&gt;&gt;=</span> <span class="n">k</span> <span class="ow">=</span> <span class="kt">R</span> <span class="o">$</span> <span class="nf">\</span><span class="n">r</span> <span class="ow">-&gt;</span> <span class="n">runReader</span> <span class="p">(</span><span class="n">k</span> <span class="p">(</span><span class="n">runReader</span> <span class="n">m</span> <span class="n">r</span><span class="p">))</span> <span class="n">r</span>
+</pre></div>
+</div>
+<div class="admonition warning">
+<p class="admonition-title">Warning</p>
+<p>[译注：在 <strong>GHC</strong> 7.10 中，你需要同时定义 <code class="docutils literal notranslate"><span class="pre">Functor</span></code> 和 <code class="docutils literal notranslate"><span class="pre">Applicative</span></code> 的实例，其中一种实现如下。]</p>
+<div class="highlight-haskell notranslate"><div class="highlight"><pre><span></span><span class="kr">instance</span> <span class="kt">Functor</span> <span class="p">(</span><span class="kt">Reader</span> <span class="n">e</span><span class="p">)</span> <span class="kr">where</span>
+<span class="nf">__fmap</span> <span class="n">f</span> <span class="n">m</span> <span class="ow">=</span> <span class="kt">R</span> <span class="o">$</span> <span class="nf">\</span><span class="n">r</span> <span class="ow">-&gt;</span> <span class="n">f</span> <span class="p">(</span><span class="n">runReader</span> <span class="n">m</span> <span class="n">r</span><span class="p">)</span>
+
+<span class="kr">instance</span> <span class="kt">Applicative</span> <span class="p">(</span><span class="kt">Reader</span> <span class="n">e</span><span class="p">)</span> <span class="kr">where</span>
+<span class="nf">__pure</span> <span class="ow">=</span> <span class="kt">R</span> <span class="o">.</span> <span class="n">const</span>
+<span class="nf">__f</span> <span class="o">&lt;*&gt;</span> <span class="n">x</span> <span class="ow">=</span> <span class="kt">R</span> <span class="o">$</span> <span class="nf">\</span><span class="n">r</span> <span class="ow">-&gt;</span> <span class="n">runReader</span> <span class="n">f</span> <span class="n">r</span> <span class="p">(</span><span class="n">runReader</span> <span class="n">x</span> <span class="n">r</span><span class="p">)</span>
+</pre></div>
+</div>
+</div>
+<p>我们可以将类型 <code class="docutils literal notranslate"><span class="pre">e</span></code> 表示的值理解为计算某个表达式所处的环境。因为 <code class="docutils literal notranslate"><span class="pre">return</span></code> 动作应当在任何情况下都具有相同的效果，所以这段代码不必考虑 <code class="docutils literal notranslate"><span class="pre">return</span></code> 所处的环境。</p>
+<p>为了让环境 ———— 也即是代码中的变量 <code class="docutils literal notranslate"><span class="pre">r</span></code> ———— 能够在当前和接下来的计算中使用，我们使用了比较复杂的 <code class="docutils literal notranslate"><span class="pre">(&gt;&gt;=)</span></code> 定义。</p>
+<p>在 monad 中执行的一段代码可以通过 <code class="docutils literal notranslate"><span class="pre">ask</span></code> 来获取环境中包含的值。</p>
+<div class="highlight-haskell notranslate"><div class="highlight"><pre><span></span><span class="c1">-- file: ch15/SupplyInstance.hs</span>
+<span class="nf">ask</span> <span class="ow">::</span> <span class="kt">Reader</span> <span class="n">e</span> <span class="n">e</span>
+<span class="nf">ask</span> <span class="ow">=</span> <span class="kt">R</span> <span class="n">id</span>
+</pre></div>
+</div>
+<p>在给定的一连串动作中，每次调用 <code class="docutils literal notranslate"><span class="pre">ask</span></code> 都将返回相同的值，因为存储在环境中的值不会改变。我们可以在 <strong>ghci</strong> 中方便地测试代码。</p>
+<div class="highlight-haskell notranslate"><div class="highlight"><pre><span></span><span class="nf">ghci</span><span class="o">&gt;</span> <span class="n">runReader</span> <span class="p">(</span><span class="n">ask</span> <span class="o">&gt;&gt;=</span> <span class="nf">\</span><span class="n">x</span> <span class="ow">-&gt;</span> <span class="n">return</span> <span class="p">(</span><span class="n">x</span> <span class="o">*</span> <span class="mi">3</span><span class="p">))</span> <span class="mi">2</span>
+<span class="kt">Loading</span> <span class="n">package</span> <span class="n">old</span><span class="o">-</span><span class="n">locale</span><span class="o">-</span><span class="mf">1.0</span><span class="o">.</span><span class="mf">0.0</span> <span class="o">...</span> <span class="n">linking</span> <span class="o">...</span> <span class="n">done</span><span class="o">.</span>
+<span class="kt">Loading</span> <span class="n">package</span> <span class="n">old</span><span class="o">-</span><span class="n">time</span><span class="o">-</span><span class="mf">1.0</span><span class="o">.</span><span class="mf">0.0</span> <span class="o">...</span> <span class="n">linking</span> <span class="o">...</span> <span class="n">done</span><span class="o">.</span>
+<span class="kt">Loading</span> <span class="n">package</span> <span class="n">random</span><span class="o">-</span><span class="mf">1.0</span><span class="o">.</span><span class="mf">0.0</span> <span class="o">...</span> <span class="n">linking</span> <span class="o">...</span> <span class="n">done</span><span class="o">.</span>
+<span class="mi">6</span>
+</pre></div>
+</div>
+<p><code class="docutils literal notranslate"><span class="pre">Reader</span></code> monad 包含在标准 <code class="docutils literal notranslate"><span class="pre">mtl</span></code> 库中，它通常与 GHC 捆绑在一起。你可以在 <code class="docutils literal notranslate"><span class="pre">Control.Monad.Reader</span></code> 模块中找到它。你可能不明白设计这个 monad 的动机是什么，实际上它通常在复杂的代码中更有用。我们时常需要访问程序深处的一段配置信息，若将这些信息作为正常参数传递，我们需要对代码做一次极为痛苦的重构。如果将这些信息隐藏在 monad 的管道中，那么不关心配置信息的中间函数就不需要看到它们。</p>
+<p>使用 <code class="docutils literal notranslate"><span class="pre">Reader</span></code> monad 最明显的动机将在 <span class="xref std std-ref">monad-transformers</span> 中介绍，我们将讨论如何把几个 monad 合并为一个新的 monad 。那时候，我们将学会如何利用 <code class="docutils literal notranslate"><span class="pre">Reader</span></code> monad 去更好地控制状态，以便我们的代码可以通过 <code class="docutils literal notranslate"><span class="pre">State</span></code> monad 修改一些值，而其他值则保持不变。</p>
+</section>
+<section id="a-return-to-automated-deriving">
+<span id="id14"></span><h2>返回自动导出<a class="headerlink" href="#a-return-to-automated-deriving" title="Permalink to this headline">¶</a></h2>
+<p>既然我们了解了 <code class="docutils literal notranslate"><span class="pre">Reader</span></code> monad ，下面让我们用它来创建一个 <code class="docutils literal notranslate"><span class="pre">MonadSupply</span></code> 类型类的实例。为了保持例子的简洁性，这里我们将违反 <code class="docutils literal notranslate"><span class="pre">MonadSupply</span></code> 的精神：我们的 <code class="docutils literal notranslate"><span class="pre">next</span></code> 动作将始终返回相同的值。</p>
+<p>将 <code class="docutils literal notranslate"><span class="pre">Reader</span></code> 类型变成一个 <code class="docutils literal notranslate"><span class="pre">MonadSupply</span></code> 类实例是一个糟糕的想法，因为任意 <code class="docutils literal notranslate"><span class="pre">Reader</span></code> 都可以表现为一个 <code class="docutils literal notranslate"><span class="pre">MonadSupply</span></code> 。所以这样的做法通常没有任何意义。</p>
+<p>事实上，我们在 <code class="docutils literal notranslate"><span class="pre">Reader</span></code> 的基础上创建一个 <code class="docutils literal notranslate"><span class="pre">newtype</span></code> 。这个 <code class="docutils literal notranslate"><span class="pre">newtype</span></code> 隐藏了内部使用 <code class="docutils literal notranslate"><span class="pre">Reader</span></code> 的事实。我们必须让类型成为我们关心的类型类的一个实例。通过激活 <code class="docutils literal notranslate"><span class="pre">GeneralizedNewtypeDeriving</span></code> 扩展功能，GHC 会帮助我们完成大部分困难的工作。</p>
+<div class="highlight-haskell notranslate"><div class="highlight"><pre><span></span><span class="c1">-- file: ch15/SupplyInstance.hs</span>
+<span class="kr">newtype</span> <span class="kt">MySupply</span> <span class="n">e</span> <span class="n">a</span> <span class="ow">=</span> <span class="kt">MySupply</span> <span class="p">{</span> <span class="n">runMySupply</span> <span class="ow">::</span> <span class="kt">Reader</span> <span class="n">e</span> <span class="n">a</span> <span class="p">}</span>
+        <span class="kr">deriving</span> <span class="p">(</span><span class="kt">Monad</span><span class="p">)</span>
+
+<span class="kr">instance</span> <span class="kt">MonadSupply</span> <span class="n">e</span> <span class="p">(</span><span class="kt">MySupply</span> <span class="n">e</span><span class="p">)</span> <span class="kr">where</span>
+        <span class="n">next</span> <span class="ow">=</span> <span class="kt">MySupply</span> <span class="o">$</span> <span class="kr">do</span>
+                         <span class="n">v</span> <span class="ow">&lt;-</span> <span class="n">ask</span>
+                         <span class="n">return</span> <span class="p">(</span><span class="kt">Just</span> <span class="n">v</span><span class="p">)</span>
+
+        <span class="c1">-- more concise:</span>
+        <span class="c1">-- next = MySupply (Just `liftM` ask)</span>
+</pre></div>
+</div>
+<p>注意，类型必须是 <code class="docutils literal notranslate"><span class="pre">MonadSupply</span> <span class="pre">e</span></code> 的实例，而不是 <code class="docutils literal notranslate"><span class="pre">MonadSupply</span></code> 。如果我们省略了类型变量，编译器将会报错。[译注：在类型声明中指定类型依赖的方式是在类名和实例名中使用相同的参数名。]</p>
+<p>要尝试我们的 <code class="docutils literal notranslate"><span class="pre">MySupply</span></code> 类型，首先创建一个能处理任何 <code class="docutils literal notranslate"><span class="pre">MonadSupply</span></code> 实例的简单函数。</p>
+<div class="highlight-haskell notranslate"><div class="highlight"><pre><span></span><span class="c1">-- file: ch15/SupplyInstance.hs</span>
+<span class="nf">xy</span> <span class="ow">::</span> <span class="p">(</span><span class="kt">Num</span> <span class="n">s</span><span class="p">,</span> <span class="kt">MonadSupply</span> <span class="n">s</span> <span class="n">m</span><span class="p">)</span> <span class="ow">=&gt;</span> <span class="n">m</span> <span class="n">s</span>
+<span class="nf">xy</span> <span class="ow">=</span> <span class="kr">do</span>
+  <span class="kt">Just</span> <span class="n">x</span> <span class="ow">&lt;-</span> <span class="n">next</span>
+  <span class="kt">Just</span> <span class="n">y</span> <span class="ow">&lt;-</span> <span class="n">next</span>
+  <span class="n">return</span> <span class="p">(</span><span class="n">x</span> <span class="o">*</span> <span class="n">y</span><span class="p">)</span>
+</pre></div>
+</div>
+<p>正如我们期望的那样，如果我们将 <code class="docutils literal notranslate"><span class="pre">Supply</span></code> monad 和 <code class="docutils literal notranslate"><span class="pre">randomsIO</span></code> 函数与上面这个函数结合，那么每次都会得到一个不同的结果。</p>
+<div class="highlight-haskell notranslate"><div class="highlight"><pre><span></span><span class="nf">ghci</span><span class="o">&gt;</span> <span class="p">(</span><span class="n">fst</span> <span class="o">.</span> <span class="n">runSupply</span> <span class="n">xy</span><span class="p">)</span> <span class="p">`</span><span class="n">fmap</span><span class="p">`</span> <span class="n">randomsIO</span>
+<span class="o">-</span><span class="mi">15697064270863081825448476392841917578</span>
+<span class="nf">ghci</span><span class="o">&gt;</span> <span class="p">(</span><span class="n">fst</span> <span class="o">.</span> <span class="n">runSupply</span> <span class="n">xy</span><span class="p">)</span> <span class="p">`</span><span class="n">fmap</span><span class="p">`</span> <span class="n">randomsIO</span>
+<span class="mi">17182983444616834494257398042360119726</span>
+</pre></div>
+</div>
+<p>因为 <code class="docutils literal notranslate"><span class="pre">MySupply</span></code> monad 由两层 <code class="docutils literal notranslate"><span class="pre">newtype</span></code> 包装，为了使其更易使用，我们可以为它编写一个自定义的执行函数：</p>
+<div class="highlight-haskell notranslate"><div class="highlight"><pre><span></span><span class="c1">-- file: ch15/SupplyInstance.hs</span>
+<span class="nf">runMS</span> <span class="ow">::</span> <span class="kt">MySupply</span> <span class="n">i</span> <span class="n">a</span> <span class="ow">-&gt;</span> <span class="n">i</span> <span class="ow">-&gt;</span> <span class="n">a</span>
+<span class="nf">runMS</span> <span class="ow">=</span> <span class="n">runReader</span> <span class="o">.</span> <span class="n">runMySupply</span>
+</pre></div>
+</div>
+<p>当我们通过这个执行函数来应用 <code class="docutils literal notranslate"><span class="pre">xy</span></code> 动作时，每次都会得到相同的结果。虽然代码没有改动，但因为我们在不同 <code class="docutils literal notranslate"><span class="pre">MonadSupply</span></code> 的实现下执行，所以它的行为改变了。</p>
+<div class="highlight-haskell notranslate"><div class="highlight"><pre><span></span><span class="nf">ghci</span><span class="o">&gt;</span> <span class="n">runMS</span> <span class="n">xy</span> <span class="mi">2</span>
+<span class="mi">4</span>
+<span class="nf">ghci</span><span class="o">&gt;</span> <span class="n">runMS</span> <span class="n">xy</span> <span class="mi">2</span>
+<span class="mi">4</span>
+</pre></div>
+</div>
+<p>就像我们的 <code class="docutils literal notranslate"><span class="pre">MonadSupply</span></code> 类型类和 <code class="docutils literal notranslate"><span class="pre">Supply</span></code> monad，几乎所有常见的 Haskell monad 都建立在接口与实现分离的情况下。举个例子，我们介绍过两个 “属于” <code class="docutils literal notranslate"><span class="pre">State</span></code> monad 的函数 <code class="docutils literal notranslate"><span class="pre">get</span></code> 和 <code class="docutils literal notranslate"><span class="pre">put</span></code> ，它们事实上是 <code class="docutils literal notranslate"><span class="pre">MonadState</span></code> 类型类的方法； <code class="docutils literal notranslate"><span class="pre">State</span></code> 类型只是这个类的一个实例。</p>
+<p>类似的，标准的 <code class="docutils literal notranslate"><span class="pre">Reader</span></code> monad 是类型类 <code class="docutils literal notranslate"><span class="pre">MonadReader</span></code> 的实例，它指定了 <code class="docutils literal notranslate"><span class="pre">ask</span></code> 方法。</p>
+<p>我们上面讨论的接口和实现分离不止对于架构清洁有帮助，它重要的实际应用在日后将更加清楚。当我们在 <span class="xref std std-ref">monad-transformers</span> 中开始合并 monad 时，我们会通过使用 <code class="docutils literal notranslate"><span class="pre">GeneralizedNewtypeDeriving</span></code> 和类型类来节约大量的工作。</p>
+</section>
+<section id="io-monad">
+<span id="hiding-the-io-monad"></span><h2>隐藏 IO monad<a class="headerlink" href="#io-monad" title="Permalink to this headline">¶</a></h2>
+<p><code class="docutils literal notranslate"><span class="pre">IO</span></code> monad 的 “祝福”和 “诅咒” 都来源于它的过分强大。假如我们相信小心地使用类型能帮助我们杜绝程序错误，那么 <code class="docutils literal notranslate"><span class="pre">IO</span></code> monad 将成为错误的一个重要来源。因为 <code class="docutils literal notranslate"><span class="pre">IO</span></code> monad 对我们做的事情不加以限制，这使我们容易遭受各种意外。</p>
+<p>我们如何驯服它的力量？假如我们想保证一段代码可以读取和写入本地文件，但它不能访问网络。这时我们不能使用 <code class="docutils literal notranslate"><span class="pre">IO</span></code> monad，因为它不会限制我们。</p>
+<section id="newtype">
+<span id="using-a-newtype"></span><h3>使用 newtype<a class="headerlink" href="#newtype" title="Permalink to this headline">¶</a></h3>
+<p>让我们创建一个新模块，它提供了一组读取和写入文件的功能。</p>
+<div class="highlight-haskell notranslate"><div class="highlight"><pre><span></span><span class="c1">-- file: ch15/HandleIO.hs</span>
+<span class="cm">{-# LANGUAGE GeneralizedNewtypeDeriving #-}</span>
+
+<span class="kr">module</span> <span class="nn">HandleIO</span>
+        <span class="p">(</span>
+          <span class="kt">HandleIO</span>
+        <span class="p">,</span> <span class="kt">Handle</span>
+        <span class="p">,</span> <span class="kt">IOMode</span><span class="p">(</span><span class="o">..</span><span class="p">)</span>
+        <span class="p">,</span> <span class="nf">runHandleIO</span>
+        <span class="p">,</span> <span class="nf">openFile</span>
+        <span class="p">,</span> <span class="nf">hClose</span>
+        <span class="p">,</span> <span class="nf">hPutStrLn</span>
+        <span class="p">)</span> <span class="kr">where</span>
+
+<span class="kr">import</span> <span class="nn">System.IO</span> <span class="p">(</span><span class="kt">Handle</span><span class="p">,</span> <span class="kt">IOMode</span><span class="p">(</span><span class="o">..</span><span class="p">))</span>
+<span class="kr">import</span> <span class="k">qualified</span> <span class="nn">System.IO</span>
+</pre></div>
+</div>
+<p>我们要创建有限制 <code class="docutils literal notranslate"><span class="pre">IO</span></code> 的第一步是使用 <code class="docutils literal notranslate"><span class="pre">newtype</span></code> 对其进行包装。</p>
+<div class="highlight-haskell notranslate"><div class="highlight"><pre><span></span><span class="c1">-- file: ch15/HandleIO.hs</span>
+<span class="kr">newtype</span> <span class="kt">HandleIO</span> <span class="n">a</span> <span class="ow">=</span> <span class="kt">HandleIO</span> <span class="p">{</span> <span class="n">runHandleIO</span> <span class="ow">::</span> <span class="kt">IO</span> <span class="n">a</span> <span class="p">}</span>
+        <span class="kr">deriving</span> <span class="p">(</span><span class="kt">Monad</span><span class="p">)</span>
+</pre></div>
+</div>
+<p>我们使用已经熟悉的技巧，从模块中导出类型构造函数和 <code class="docutils literal notranslate"><span class="pre">runHandleIO</span></code> 执行函数，但不导出数据构造器。这可以阻止在 <code class="docutils literal notranslate"><span class="pre">HandleIO</span></code> monad 中执行的代码获取它所包装的 <code class="docutils literal notranslate"><span class="pre">IO</span></code> monad。</p>
+<p>剩下的工作就是包装我们希望 monad 允许的每个动作。这可以通过用 <code class="docutils literal notranslate"><span class="pre">HandleIO</span></code> 数据构造函数包装每个 <code class="docutils literal notranslate"><span class="pre">IO</span></code> 实现。</p>
+<div class="highlight-haskell notranslate"><div class="highlight"><pre><span></span><span class="c1">-- file: ch15/HandleIO.hs</span>
+<span class="nf">openFile</span> <span class="ow">::</span> <span class="kt">FilePath</span> <span class="ow">-&gt;</span> <span class="kt">IOMode</span> <span class="ow">-&gt;</span> <span class="kt">HandleIO</span> <span class="kt">Handle</span>
+<span class="nf">openFile</span> <span class="n">path</span> <span class="n">mode</span> <span class="ow">=</span> <span class="kt">HandleIO</span> <span class="p">(</span><span class="kt">System</span><span class="o">.</span><span class="kt">IO</span><span class="o">.</span><span class="n">openFile</span> <span class="n">path</span> <span class="n">mode</span><span class="p">)</span>
+
+<span class="nf">hClose</span> <span class="ow">::</span> <span class="kt">Handle</span> <span class="ow">-&gt;</span> <span class="kt">HandleIO</span> <span class="nb">()</span>
+<span class="nf">hClose</span> <span class="ow">=</span> <span class="kt">HandleIO</span> <span class="o">.</span> <span class="kt">System</span><span class="o">.</span><span class="kt">IO</span><span class="o">.</span><span class="n">hClose</span>
+
+<span class="nf">hPutStrLn</span> <span class="ow">::</span> <span class="kt">Handle</span> <span class="ow">-&gt;</span> <span class="kt">String</span> <span class="ow">-&gt;</span> <span class="kt">HandleIO</span> <span class="nb">()</span>
+<span class="nf">hPutStrLn</span> <span class="n">h</span> <span class="n">s</span> <span class="ow">=</span> <span class="kt">HandleIO</span> <span class="p">(</span><span class="kt">System</span><span class="o">.</span><span class="kt">IO</span><span class="o">.</span><span class="n">hPutStrLn</span> <span class="n">h</span> <span class="n">s</span><span class="p">)</span>
+</pre></div>
+</div>
+<p>我们现在可以使用有限制的 <code class="docutils literal notranslate"><span class="pre">HandleIO</span></code> monad 来执行 I/O 操作。</p>
+<div class="highlight-haskell notranslate"><div class="highlight"><pre><span></span><span class="c1">-- file: ch15/HandleIO.hs</span>
+<span class="nf">safeHello</span> <span class="ow">::</span> <span class="kt">FilePath</span> <span class="ow">-&gt;</span> <span class="kt">HandleIO</span> <span class="nb">()</span>
+<span class="nf">safeHello</span> <span class="n">path</span> <span class="ow">=</span> <span class="kr">do</span>
+  <span class="n">h</span> <span class="ow">&lt;-</span> <span class="n">openFile</span> <span class="n">path</span> <span class="kt">WriteMode</span>
+  <span class="n">hPutStrLn</span> <span class="n">h</span> <span class="s">&quot;hello world&quot;</span>
+  <span class="n">hClose</span> <span class="n">h</span>
+</pre></div>
+</div>
+<p>要执行这个动作，我们使用 <code class="docutils literal notranslate"><span class="pre">runHandleIO</span></code> 。</p>
+<div class="highlight-haskell notranslate"><div class="highlight"><pre><span></span><span class="nf">ghci</span><span class="o">&gt;</span> <span class="kt">:</span><span class="n">load</span> <span class="kt">HandleIO</span>
+<span class="p">[</span><span class="mi">1</span> <span class="kr">of</span> <span class="mi">1</span><span class="p">]</span> <span class="kt">Compiling</span> <span class="kt">HandleIO</span>         <span class="p">(</span> <span class="kt">HandleIO</span><span class="o">.</span><span class="n">hs</span><span class="p">,</span> <span class="n">interpreted</span> <span class="p">)</span>
+<span class="kt">Ok</span><span class="p">,</span> <span class="n">modules</span> <span class="n">loaded</span><span class="kt">:</span> <span class="kt">HandleIO</span><span class="o">.</span>
+<span class="nf">ghci</span><span class="o">&gt;</span> <span class="n">runHandleIO</span> <span class="p">(</span><span class="n">safeHello</span> <span class="s">&quot;hello_world_101.txt&quot;</span><span class="p">)</span>
+<span class="kt">Loading</span> <span class="n">package</span> <span class="n">old</span><span class="o">-</span><span class="n">locale</span><span class="o">-</span><span class="mf">1.0</span><span class="o">.</span><span class="mf">0.0</span> <span class="o">...</span> <span class="n">linking</span> <span class="o">...</span> <span class="n">done</span><span class="o">.</span>
+<span class="kt">Loading</span> <span class="n">package</span> <span class="n">old</span><span class="o">-</span><span class="n">time</span><span class="o">-</span><span class="mf">1.0</span><span class="o">.</span><span class="mf">0.0</span> <span class="o">...</span> <span class="n">linking</span> <span class="o">...</span> <span class="n">done</span><span class="o">.</span>
+<span class="kt">Loading</span> <span class="n">package</span> <span class="n">filepath</span><span class="o">-</span><span class="mf">1.1</span><span class="o">.</span><span class="mf">0.0</span> <span class="o">...</span> <span class="n">linking</span> <span class="o">...</span> <span class="n">done</span><span class="o">.</span>
+<span class="kt">Loading</span> <span class="n">package</span> <span class="n">directory</span><span class="o">-</span><span class="mf">1.0</span><span class="o">.</span><span class="mf">0.0</span> <span class="o">...</span> <span class="n">linking</span> <span class="o">...</span> <span class="n">done</span><span class="o">.</span>
+<span class="kt">Loading</span> <span class="n">package</span> <span class="n">mtl</span><span class="o">-</span><span class="mf">1.1</span><span class="o">.</span><span class="mf">0.0</span> <span class="o">...</span> <span class="n">linking</span> <span class="o">...</span> <span class="n">done</span><span class="o">.</span>
+<span class="nf">ghci</span><span class="o">&gt;</span> <span class="kt">:</span><span class="n">m</span> <span class="o">+</span><span class="kt">System</span><span class="o">.</span><span class="kt">Directory</span>
+<span class="nf">ghci</span><span class="o">&gt;</span> <span class="n">removeFile</span> <span class="s">&quot;hello_world_101.txt&quot;</span>
+</pre></div>
+</div>
+<p>假如我们试图用一种不被允许的方式排列一个在 <code class="docutils literal notranslate"><span class="pre">HandleIO</span></code> monad 中执行的动作，类型系统会加以阻止。</p>
+<div class="highlight-haskell notranslate"><div class="highlight"><pre><span></span>ghci&gt; runHandleIO (safeHello &quot;goodbye&quot; &gt;&gt; removeFile &quot;goodbye&quot;)
+
+&lt;interactive&gt;:1:36:
+        Couldn&#39;t match expected type `HandleIO a&#39;
+                   against inferred type `IO ()&#39;
+        In the second argument of `(&gt;&gt;)&#39;, namely `removeFile &quot;goodbye&quot;&#39;
+        In the first argument of `runHandleIO&#39;, namely
+                `(safeHello &quot;goodbye&quot; &gt;&gt; removeFile &quot;goodbye&quot;)&#39;
+        In the expression:
+                runHandleIO (safeHello &quot;goodbye&quot; &gt;&gt; removeFile &quot;goodbye&quot;)
+</pre></div>
+</div>
+</section>
+<section id="designing-for-unexpected-uses">
+<span id="id15"></span><h3>针对意外使用情况设计<a class="headerlink" href="#designing-for-unexpected-uses" title="Permalink to this headline">¶</a></h3>
+<p><code class="docutils literal notranslate"><span class="pre">HandleIO</span></code> monad 有一个重要的小问题：我们可能偶尔需要一个 “逃生舱门” ，而 <code class="docutils literal notranslate"><span class="pre">HandleIO</span></code> monad 没有考虑到这种可能性。如果定义一个这样的 monad，我们很有可能会偶尔执行 monad 设计所不允许的 I/O 动作。</p>
+<p>设计这个 monad 的目的是让我们更容易在普通情况下编写无错代码，而不是为了杜绝特殊情况发生。让我们给自己留一条出路。</p>
+<p><code class="docutils literal notranslate"><span class="pre">Conotrol.Monad.Trans</span></code> 模块定义了一个 “标准逃生舱门” ： <code class="docutils literal notranslate"><span class="pre">MonadIO</span></code> 类型类。函数 <code class="docutils literal notranslate"><span class="pre">liftIO</span></code> 可以将一个 <code class="docutils literal notranslate"><span class="pre">IO</span></code> 动作嵌入另一个 monad 中。</p>
+<div class="highlight-haskell notranslate"><div class="highlight"><pre><span></span><span class="nf">ghci</span><span class="o">&gt;</span> <span class="kt">:</span><span class="n">m</span> <span class="o">+</span><span class="kt">Control</span><span class="o">.</span><span class="kt">Monad</span><span class="o">.</span><span class="kt">Trans</span>
+<span class="nf">ghci</span><span class="o">&gt;</span> <span class="kt">:</span><span class="n">info</span> <span class="kt">MonadIO</span>
+<span class="kr">class</span> <span class="p">(</span><span class="kt">Monad</span> <span class="n">m</span><span class="p">)</span> <span class="ow">=&gt;</span> <span class="kt">MonadIO</span> <span class="n">m</span> <span class="kr">where</span> <span class="n">liftIO</span> <span class="ow">::</span> <span class="kt">IO</span> <span class="n">a</span> <span class="ow">-&gt;</span> <span class="n">m</span> <span class="n">a</span>
+        <span class="c1">-- Defined in Control.Monad.Trans</span>
+<span class="kr">instance</span> <span class="kt">MonadIO</span> <span class="kt">IO</span> <span class="c1">-- Defined in Control.Monad.Trans</span>
+</pre></div>
+</div>
+<p>要实现这个类型类非常简单，只需要用我们自己的数据构造器将 <code class="docutils literal notranslate"><span class="pre">IO</span></code> 包装起来就可以了：</p>
+<div class="highlight-haskell notranslate"><div class="highlight"><pre><span></span><span class="c1">-- file: ch15/HandleIO.hs</span>
+<span class="kr">import</span> <span class="nn">Control.Monad.Trans</span> <span class="p">(</span><span class="kt">MonadIO</span><span class="p">(</span><span class="o">..</span><span class="p">))</span>
+
+<span class="kr">instance</span> <span class="kt">MonadIO</span> <span class="kt">HandleIO</span> <span class="kr">where</span>
+        <span class="n">liftIO</span> <span class="ow">=</span> <span class="kt">HandleIO</span>
+</pre></div>
+</div>
+<p>通过审慎地使用 <code class="docutils literal notranslate"><span class="pre">liftIO</span></code> ，我们可以逃脱束缚，并在必要的时候调用 IO 操作。</p>
+<div class="highlight-haskell notranslate"><div class="highlight"><pre><span></span><span class="c1">-- file: ch15/HandleIO.hs</span>
+<span class="nf">tidyHello</span> <span class="ow">::</span> <span class="kt">FilePath</span> <span class="ow">-&gt;</span> <span class="kt">HandleIO</span> <span class="nb">()</span>
+<span class="nf">tidyHello</span> <span class="n">path</span> <span class="ow">=</span> <span class="kr">do</span>
+  <span class="n">safeHello</span> <span class="n">path</span>
+  <span class="n">liftIO</span> <span class="p">(</span><span class="n">removeFile</span> <span class="n">path</span><span class="p">)</span>
+</pre></div>
+</div>
+</section>
+<section id="using-typeclasses">
+<span id="id16"></span><h3>使用类型类<a class="headerlink" href="#using-typeclasses" title="Permalink to this headline">¶</a></h3>
+<p>将 <code class="docutils literal notranslate"><span class="pre">IO</span></code> 隐藏到另一个 monad 的缺陷是我们仍然绑定到了一个具体的实现。假如要将 <code class="docutils literal notranslate"><span class="pre">HandleIO</span></code> 和一些其它的 monad 交换，就必须改变每个使用 <code class="docutils literal notranslate"><span class="pre">HandleIO</span></code> 的动作的类型。</p>
+<p>一种替代方式是创建一个类型类。我们想从一个操作文件的 monad 中获取接口，这个类型类指定了这个接口。</p>
+<div class="highlight-haskell notranslate"><div class="highlight"><pre><span></span><span class="c1">-- file: ch15/MonadHandle.hs</span>
+<span class="cm">{-# LANGUAGE FunctionalDependencies, MultiParamTypeClasses #-}</span>
+
+<span class="kr">module</span> <span class="nn">MonadHandle</span> <span class="p">(</span><span class="kt">MonadHandle</span><span class="p">(</span><span class="o">..</span><span class="p">))</span> <span class="kr">where</span>
+
+<span class="kr">import</span> <span class="nn">System.IO</span> <span class="p">(</span><span class="kt">IOMode</span><span class="p">(</span><span class="o">..</span><span class="p">))</span>
+
+<span class="kr">class</span> <span class="kt">Monad</span> <span class="n">m</span> <span class="ow">=&gt;</span> <span class="kt">MonadHandle</span> <span class="n">h</span> <span class="n">m</span> <span class="o">|</span> <span class="n">m</span> <span class="ow">-&gt;</span> <span class="n">h</span> <span class="kr">where</span>
+        <span class="n">openFile</span> <span class="ow">::</span> <span class="kt">FilePath</span> <span class="ow">-&gt;</span> <span class="kt">IOMode</span> <span class="ow">-&gt;</span> <span class="n">m</span> <span class="n">h</span>
+        <span class="n">hPutStr</span> <span class="ow">::</span> <span class="n">h</span> <span class="ow">-&gt;</span> <span class="kt">String</span> <span class="ow">-&gt;</span> <span class="n">m</span> <span class="nb">()</span>
+        <span class="n">hClose</span> <span class="ow">::</span> <span class="n">h</span> <span class="ow">-&gt;</span> <span class="n">m</span> <span class="nb">()</span>
+        <span class="n">hGetContents</span> <span class="ow">::</span> <span class="n">h</span> <span class="ow">-&gt;</span> <span class="n">m</span> <span class="kt">String</span>
+
+        <span class="n">hPutStrLn</span> <span class="ow">::</span> <span class="n">h</span> <span class="ow">-&gt;</span> <span class="kt">String</span> <span class="ow">-&gt;</span> <span class="n">m</span> <span class="nb">()</span>
+        <span class="n">hPutStrLn</span> <span class="n">h</span> <span class="n">s</span> <span class="ow">=</span> <span class="n">hPutStr</span> <span class="n">h</span> <span class="n">s</span> <span class="o">&gt;&gt;</span> <span class="n">hPutStr</span> <span class="n">h</span> <span class="s">&quot;</span><span class="se">\n</span><span class="s">&quot;</span>
+</pre></div>
+</div>
+<p>现在，我们决定抽象出 monad 的类型和文件句柄的类型。为了满足类型检查器，这里添加了一个函数依赖：对于 <code class="docutils literal notranslate"><span class="pre">MonadHandle</span></code> 的任何实例，只有一个句柄类型可以使用。当 <code class="docutils literal notranslate"><span class="pre">IO</span></code> monad 成为这个类的一个实例时，我们使用一个普通的 <code class="docutils literal notranslate"><span class="pre">Handle</span></code> 。</p>
+<div class="highlight-haskell notranslate"><div class="highlight"><pre><span></span><span class="c1">-- file: ch15/MonadHandleIO.hs</span>
+<span class="cm">{-# LANGUAGE FunctionalDependencies, MultiParamTypeClasses #-}</span>
+
+<span class="kr">import</span> <span class="nn">MonadHandle</span>
+<span class="kr">import</span> <span class="k">qualified</span> <span class="nn">System.IO</span>
+
+<span class="kr">import</span> <span class="nn">System.IO</span> <span class="p">(</span><span class="kt">IOMode</span><span class="p">(</span><span class="o">..</span><span class="p">))</span>
+<span class="kr">import</span> <span class="nn">Control.Monad.Trans</span> <span class="p">(</span><span class="kt">MonadIO</span><span class="p">(</span><span class="o">..</span><span class="p">),</span> <span class="kt">MonadTrans</span><span class="p">(</span><span class="o">..</span><span class="p">))</span>
+<span class="kr">import</span> <span class="nn">System.Directory</span> <span class="p">(</span><span class="nf">removeFile</span><span class="p">)</span>
+
+<span class="kr">import</span> <span class="nn">SafeHello</span>
+
+<span class="kr">instance</span> <span class="kt">MonadHandle</span> <span class="kt">System</span><span class="o">.</span><span class="kt">IO</span><span class="o">.</span><span class="kt">Handle</span> <span class="kt">IO</span> <span class="kr">where</span>
+        <span class="n">openFile</span> <span class="ow">=</span> <span class="kt">System</span><span class="o">.</span><span class="kt">IO</span><span class="o">.</span><span class="n">openFile</span>
+        <span class="n">hPutStr</span> <span class="ow">=</span> <span class="kt">System</span><span class="o">.</span><span class="kt">IO</span><span class="o">.</span><span class="n">hPutStr</span>
+        <span class="n">hClose</span> <span class="ow">=</span> <span class="kt">System</span><span class="o">.</span><span class="kt">IO</span><span class="o">.</span><span class="n">hClose</span>
+        <span class="n">hGetContents</span> <span class="ow">=</span> <span class="kt">System</span><span class="o">.</span><span class="kt">IO</span><span class="o">.</span><span class="n">hGetContents</span>
+        <span class="n">hPutStrLn</span> <span class="ow">=</span> <span class="kt">System</span><span class="o">.</span><span class="kt">IO</span><span class="o">.</span><span class="n">hPutStrLn</span>
+</pre></div>
+</div>
+<p>因为任何 <code class="docutils literal notranslate"><span class="pre">MonadHandle</span></code> 也必须是一个 <code class="docutils literal notranslate"><span class="pre">Monad</span></code> ，所以我们可以使用普通的 <code class="docutils literal notranslate"><span class="pre">do</span></code> 标识符编写修改文件的代码，而不需要关心它最终在哪个 monad 中执行。</p>
+<div class="highlight-haskell notranslate"><div class="highlight"><pre><span></span><span class="c1">-- file: ch15/SafeHello.hs</span>
+<span class="nf">safeHello</span> <span class="ow">::</span> <span class="kt">MonadHandle</span> <span class="n">h</span> <span class="n">m</span> <span class="ow">=&gt;</span> <span class="kt">FilePath</span> <span class="ow">-&gt;</span> <span class="n">m</span> <span class="nb">()</span>
+<span class="nf">safeHello</span> <span class="n">path</span> <span class="ow">=</span> <span class="kr">do</span>
+  <span class="n">h</span> <span class="ow">&lt;-</span> <span class="n">openFile</span> <span class="n">path</span> <span class="kt">WriteMode</span>
+  <span class="n">hPutStrLn</span> <span class="n">h</span> <span class="s">&quot;hello world&quot;</span>
+  <span class="n">hClose</span> <span class="n">h</span>
+</pre></div>
+</div>
+<p>我们已经让 <code class="docutils literal notranslate"><span class="pre">IO</span></code> 成为这个类型类的一个实例，现在可以在 <strong>ghci</strong> 中执行这个动作：</p>
+<div class="highlight-haskell notranslate"><div class="highlight"><pre><span></span><span class="nf">ghci</span><span class="o">&gt;</span> <span class="n">safeHello</span> <span class="s">&quot;hello to my fans in domestic surveillance&quot;</span>
+<span class="kt">Loading</span> <span class="n">package</span> <span class="n">old</span><span class="o">-</span><span class="n">locale</span><span class="o">-</span><span class="mf">1.0</span><span class="o">.</span><span class="mf">0.0</span> <span class="o">...</span> <span class="n">linking</span> <span class="o">...</span> <span class="n">done</span><span class="o">.</span>
+<span class="kt">Loading</span> <span class="n">package</span> <span class="n">old</span><span class="o">-</span><span class="n">time</span><span class="o">-</span><span class="mf">1.0</span><span class="o">.</span><span class="mf">0.0</span> <span class="o">...</span> <span class="n">linking</span> <span class="o">...</span> <span class="n">done</span><span class="o">.</span>
+<span class="kt">Loading</span> <span class="n">package</span> <span class="n">filepath</span><span class="o">-</span><span class="mf">1.1</span><span class="o">.</span><span class="mf">0.0</span> <span class="o">...</span> <span class="n">linking</span> <span class="o">...</span> <span class="n">done</span><span class="o">.</span>
+<span class="kt">Loading</span> <span class="n">package</span> <span class="n">directory</span><span class="o">-</span><span class="mf">1.0</span><span class="o">.</span><span class="mf">0.0</span> <span class="o">...</span> <span class="n">linking</span> <span class="o">...</span> <span class="n">done</span><span class="o">.</span>
+<span class="kt">Loading</span> <span class="n">package</span> <span class="n">mtl</span><span class="o">-</span><span class="mf">1.1</span><span class="o">.</span><span class="mf">0.0</span> <span class="o">...</span> <span class="n">linking</span> <span class="o">...</span> <span class="n">done</span><span class="o">.</span>
+<span class="nf">ghci</span><span class="o">&gt;</span> <span class="n">removeFile</span> <span class="s">&quot;hello to my fans in domestic surveillance&quot;</span>
+</pre></div>
+</div>
+<p>使用类型类的好处在于，我们可以不需要接触过多代码并互换一个底层的 monad ，因为大多数代码不知道或不关心具体底层 monad 的实现。例如，可以用一个 monad 来替换 <code class="docutils literal notranslate"><span class="pre">IO</span></code> ，它会在文件写入时压缩文件。</p>
+<p>通过类型类定义一个 monad 的接口有另一个好处：它允许其他人在 <code class="docutils literal notranslate"><span class="pre">newtype</span></code> 包装器中隐藏我们的实现，并自动派生他们想要暴露的类型类的实例。</p>
+</section>
+<section id="isolation-and-testing">
+<span id="id17"></span><h3>隔离和测试<a class="headerlink" href="#isolation-and-testing" title="Permalink to this headline">¶</a></h3>
+<p>事实上，因为 <code class="docutils literal notranslate"><span class="pre">safeHello</span></code> 函数没有使用 <code class="docutils literal notranslate"><span class="pre">IO</span></code> 类型，我们甚至可以使用不能执行 I/O 的 monad。通过这种方法，我们可以在纯粹且受控的环境中对那些在平常情况下会出现副作用的代码进行测试。</p>
+<p>为此，我们将创建一个 monad，这个 monad 不会执行任何 I/O 操作，但它会记录每个与文件相关联的事件以供后续处理。</p>
+<div class="highlight-haskell notranslate"><div class="highlight"><pre><span></span><span class="c1">-- file: ch15/WriterIO.hs</span>
+<span class="kr">data</span> <span class="kt">Event</span> <span class="ow">=</span> <span class="kt">Open</span> <span class="kt">FilePath</span> <span class="kt">IOMode</span>
+                   <span class="o">|</span> <span class="kt">Put</span> <span class="kt">String</span> <span class="kt">String</span>
+                   <span class="o">|</span> <span class="kt">Close</span> <span class="kt">String</span>
+                   <span class="o">|</span> <span class="kt">GetContents</span> <span class="kt">String</span>
+                         <span class="kr">deriving</span> <span class="p">(</span><span class="kt">Show</span><span class="p">)</span>
+</pre></div>
+</div>
+<p>虽然在 <a class="reference internal" href="14.html#using-a-new-monad-show-your-work"><span class="std std-ref">使用新的Monad</span></a> 中已经开发了一个 <code class="docutils literal notranslate"><span class="pre">Logger</span></code> 类型，但这里我们将使用标准的、更广泛的 <code class="docutils literal notranslate"><span class="pre">Writer</span></code> monad。和其它 <code class="docutils literal notranslate"><span class="pre">mtl</span></code> monad 类似， <code class="docutils literal notranslate"><span class="pre">Writer</span></code> 提供的 API 将在一个类型类中被定义，也就是接下来要展示的 <code class="docutils literal notranslate"><span class="pre">MonadWriter</span></code> 。<code class="docutils literal notranslate"><span class="pre">MonadWriter</span></code> 最有用的方法是 <code class="docutils literal notranslate"><span class="pre">tell</span></code> ，这个方法记录了一个值。</p>
+<div class="highlight-haskell notranslate"><div class="highlight"><pre><span></span><span class="nf">ghci</span><span class="o">&gt;</span> <span class="kt">:</span><span class="n">m</span> <span class="o">+</span><span class="kt">Control</span><span class="o">.</span><span class="kt">Monad</span><span class="o">.</span><span class="kt">Writer</span>
+<span class="nf">ghci</span><span class="o">&gt;</span> <span class="kt">:</span><span class="kr">type</span> <span class="n">tell</span>
+<span class="nf">tell</span> <span class="ow">::</span> <span class="p">(</span><span class="kt">MonadWriter</span> <span class="n">w</span> <span class="n">m</span><span class="p">)</span> <span class="ow">=&gt;</span> <span class="n">w</span> <span class="ow">-&gt;</span> <span class="n">m</span> <span class="nb">()</span>
+</pre></div>
+</div>
+<p>虽然 <code class="docutils literal notranslate"><span class="pre">tell</span></code> 方法可以记录任意类型的 <code class="docutils literal notranslate"><span class="pre">Monoid</span></code> ，但是因为列表的类型是 <code class="docutils literal notranslate"><span class="pre">Monoid</span></code> ，所以 <code class="docutils literal notranslate"><span class="pre">tell</span></code> 方法将记录一个由 <code class="docutils literal notranslate"><span class="pre">Event</span></code> 构成的列表。</p>
+<p>尽管我们可以让 <code class="docutils literal notranslate"><span class="pre">Writer</span> <span class="pre">[Event]</span></code> 成为 <code class="docutils literal notranslate"><span class="pre">MonadHandle</span></code> 的一个实例，但一个更廉价也更安全的做法是编写一个特殊的 monad ，并且要做到这一点也比较容易。</p>
+<div class="highlight-haskell notranslate"><div class="highlight"><pre><span></span><span class="c1">-- file: ch15/WriterIO.hs</span>
+<span class="kr">newtype</span> <span class="kt">WriterIO</span> <span class="n">a</span> <span class="ow">=</span> <span class="kt">W</span> <span class="p">{</span> <span class="n">runW</span> <span class="ow">::</span> <span class="kt">Writer</span> <span class="p">[</span><span class="kt">Event</span><span class="p">]</span> <span class="n">a</span> <span class="p">}</span>
+        <span class="kr">deriving</span> <span class="p">(</span><span class="kt">Monad</span><span class="p">,</span> <span class="kt">MonadWriter</span> <span class="p">[</span><span class="kt">Event</span><span class="p">])</span>
+</pre></div>
+</div>
+<p>执行函数首先会移除我们之前添加的 <code class="docutils literal notranslate"><span class="pre">newtype</span></code> 包装器，然后再调用普通 <code class="docutils literal notranslate"><span class="pre">Writer</span></code> monad 的执行函数。</p>
+<div class="highlight-haskell notranslate"><div class="highlight"><pre><span></span><span class="c1">-- file: ch15/WriterIO.hs</span>
+<span class="nf">runWriterIO</span> <span class="ow">::</span> <span class="kt">WriterIO</span> <span class="n">a</span> <span class="ow">-&gt;</span> <span class="p">(</span><span class="n">a</span><span class="p">,</span> <span class="p">[</span><span class="kt">Event</span><span class="p">])</span>
+<span class="nf">runWriterIO</span> <span class="ow">=</span> <span class="n">runWriter</span> <span class="o">.</span> <span class="n">runW</span>
+</pre></div>
+</div>
+<p>当我们在 <strong>ghci</strong> 中执行这段代码的时候，它将反馈给我们一份日志，这份日志记录了函数对文件所做的行为。</p>
+<div class="highlight-haskell notranslate"><div class="highlight"><pre><span></span><span class="nf">ghci</span><span class="o">&gt;</span> <span class="kt">:</span><span class="n">load</span> <span class="kt">WriterIO</span>
+<span class="p">[</span><span class="mi">1</span> <span class="kr">of</span> <span class="mi">3</span><span class="p">]</span> <span class="kt">Compiling</span> <span class="kt">MonadHandle</span>      <span class="p">(</span> <span class="kt">MonadHandle</span><span class="o">.</span><span class="n">hs</span><span class="p">,</span> <span class="n">interpreted</span> <span class="p">)</span>
+<span class="p">[</span><span class="mi">2</span> <span class="kr">of</span> <span class="mi">3</span><span class="p">]</span> <span class="kt">Compiling</span> <span class="kt">SafeHello</span>        <span class="p">(</span> <span class="kt">SafeHello</span><span class="o">.</span><span class="n">hs</span><span class="p">,</span> <span class="n">interpreted</span> <span class="p">)</span>
+<span class="p">[</span><span class="mi">3</span> <span class="kr">of</span> <span class="mi">3</span><span class="p">]</span> <span class="kt">Compiling</span> <span class="kt">WriterIO</span>         <span class="p">(</span> <span class="kt">WriterIO</span><span class="o">.</span><span class="n">hs</span><span class="p">,</span> <span class="n">interpreted</span> <span class="p">)</span>
+<span class="kt">Ok</span><span class="p">,</span> <span class="n">modules</span> <span class="n">loaded</span><span class="kt">:</span> <span class="kt">SafeHello</span><span class="p">,</span> <span class="kt">MonadHandle</span><span class="p">,</span> <span class="kt">WriterIO</span><span class="o">.</span>
+<span class="nf">ghci</span><span class="o">&gt;</span> <span class="n">runWriterIO</span> <span class="p">(</span><span class="n">safeHello</span> <span class="s">&quot;foo&quot;</span><span class="p">)</span>
+<span class="p">(</span><span class="nb">()</span><span class="p">,[</span><span class="kt">Open</span> <span class="s">&quot;foo&quot;</span> <span class="kt">WriteMode</span><span class="p">,</span><span class="kt">Put</span> <span class="s">&quot;foo&quot;</span> <span class="s">&quot;hello world&quot;</span><span class="p">,</span><span class="kt">Put</span> <span class="s">&quot;foo&quot;</span> <span class="s">&quot;</span><span class="se">\n</span><span class="s">&quot;</span><span class="p">,</span><span class="kt">Close</span> <span class="s">&quot;foo&quot;</span><span class="p">])</span>
+</pre></div>
+</div>
+</section>
+<section id="writer-monad">
+<span id="the-writer-monad-and-lists"></span><h3>Writer monad 和 列表<a class="headerlink" href="#writer-monad" title="Permalink to this headline">¶</a></h3>
+<p>每当我们使用 <code class="docutils literal notranslate"><span class="pre">tell</span></code> 方法时， <code class="docutils literal notranslate"><span class="pre">Writer</span></code> monad 都会调用 monoid 的 <code class="docutils literal notranslate"><span class="pre">mappend</span></code> 函数。因为列表的 <code class="docutils literal notranslate"><span class="pre">mappend</span></code> 动作是 <code class="docutils literal notranslate"><span class="pre">(++)</span></code> ，而不断重复附加操作是非常浪费资源的，所以在实际使用 <code class="docutils literal notranslate"><span class="pre">Writer</span></code> 时，列表并不是一个很好的选择。在上面的实例中，我们纯粹是为了追求简单才使用了列表。</p>
+<p>在生产代码中，如果你想使用 <code class="docutils literal notranslate"><span class="pre">Writer</span></code> monad ，并且需要类似列表的行为，那么你应当选择那些在执行附加操作时性能更优的类型。在 <a class="reference internal" href="13.html#taking-advantage-of-functions-as-data"><span class="std std-ref">把函数当成数据来用</span></a> 中介绍过的差异列表就是一个这样的类型。你不需要实现自己的差异列表：Haskell 包数据库 Hackage 提供了一个调试好的库，你可以直接下载使用。除此之外，你可以使用 <code class="docutils literal notranslate"><span class="pre">Data.Sequence</span></code> 模块中的 <code class="docutils literal notranslate"><span class="pre">Seq</span></code> 类型，我们在 <a class="reference internal" href="13.html#general-purpose-sequences"><span class="std std-ref">通用序列</span></a> 中介绍过这个类型。</p>
+</section>
+<section id="i-o">
+<span id="arbitrary-io-revisited"></span><h3>任意 I/O 访问<a class="headerlink" href="#i-o" title="Permalink to this headline">¶</a></h3>
+<p>在使用类型类方法限制 <code class="docutils literal notranslate"><span class="pre">IO</span></code> 的同时，我们可能还会希望继续保留执行任意 I/O 操作的能力。为此，我们可以尝试将 <code class="docutils literal notranslate"><span class="pre">MonadIO</span></code> 作为约束添加到类型类里面。</p>
+<div class="highlight-haskell notranslate"><div class="highlight"><pre><span></span><span class="c1">-- file: ch15/MonadHandleIO.hs</span>
+<span class="kr">class</span> <span class="p">(</span><span class="kt">MonadHandle</span> <span class="n">h</span> <span class="n">m</span><span class="p">,</span> <span class="kt">MonadIO</span> <span class="n">m</span><span class="p">)</span> <span class="ow">=&gt;</span> <span class="kt">MonadHandleIO</span> <span class="n">h</span> <span class="n">m</span> <span class="o">|</span> <span class="n">m</span> <span class="ow">-&gt;</span> <span class="n">h</span>
+
+<span class="kr">instance</span> <span class="kt">MonadHandleIO</span> <span class="kt">System</span><span class="o">.</span><span class="kt">IO</span><span class="o">.</span><span class="kt">Handle</span> <span class="kt">IO</span>
+
+<span class="nf">tidierHello</span> <span class="ow">::</span> <span class="p">(</span><span class="kt">MonadHandleIO</span> <span class="n">h</span> <span class="n">m</span><span class="p">)</span> <span class="ow">=&gt;</span> <span class="kt">FilePath</span> <span class="ow">-&gt;</span> <span class="n">m</span> <span class="nb">()</span>
+<span class="nf">tidierHello</span> <span class="n">path</span> <span class="ow">=</span> <span class="kr">do</span>
+  <span class="n">safeHello</span> <span class="n">path</span>
+  <span class="n">liftIO</span> <span class="p">(</span><span class="n">removeFile</span> <span class="n">path</span><span class="p">)</span>
+</pre></div>
+</div>
+<p>但是这种方法会导致一个问题：添加 <code class="docutils literal notranslate"><span class="pre">MonadIO</span></code> 约束将使得我们无法再判断一个测试是否会带有副作用，我们也因此失去了在纯粹的环境中测试代码的能力。另一种方法是调整这个约束的作用域，使它只影响那些真正需要执行 I/O 操作的函数，而非所有函数。</p>
+<div class="highlight-haskell notranslate"><div class="highlight"><pre><span></span><span class="c1">-- file: ch15/MonadHandleIO.hs</span>
+<span class="nf">tidyHello</span> <span class="ow">::</span> <span class="p">(</span><span class="kt">MonadIO</span> <span class="n">m</span><span class="p">,</span> <span class="kt">MonadHandle</span> <span class="n">h</span> <span class="n">m</span><span class="p">)</span> <span class="ow">=&gt;</span> <span class="kt">FilePath</span> <span class="ow">-&gt;</span> <span class="n">m</span> <span class="nb">()</span>
+<span class="nf">tidyHello</span> <span class="n">path</span> <span class="ow">=</span> <span class="kr">do</span>
+  <span class="n">safeHello</span> <span class="n">path</span>
+  <span class="n">liftIO</span> <span class="p">(</span><span class="n">removeFile</span> <span class="n">path</span><span class="p">)</span>
+</pre></div>
+</div>
+<p>我们可以对不受 <code class="docutils literal notranslate"><span class="pre">MonadIO</span></code> 约束的函数使用纯属性测试，对其余的函数使用传统的单元测试。</p>
+<p>遗憾的是，这种做法只不过是将一个问题换成了另一个问题：只受 <code class="docutils literal notranslate"><span class="pre">MonadHandle</span></code> 约束的代码将无法调用同时受 <code class="docutils literal notranslate"><span class="pre">MonadIO</span></code> 和 <code class="docutils literal notranslate"><span class="pre">MonadHandle</span></code> 约束的代码。如果我们在 <code class="docutils literal notranslate"><span class="pre">MonadHandle</span></code> 约束的代码内部发现了这个问题，那么我们就必须在引发这个问题的所有代码路径上都加上 <code class="docutils literal notranslate"><span class="pre">MonadIO</span></code> 约束。</p>
+<p>允许执行任意 I/O 操作是有风险的，而且这么做对我们开发、测试代码的流程都会有巨大的影响。相比放宽对代码行为的限制，我们通常会追求更清晰的代码逻辑和更容易的测试环境。</p>
+</section>
+<section id="id18">
+<h3>练习<a class="headerlink" href="#id18" title="Permalink to this headline">¶</a></h3>
+<ol class="arabic simple">
+<li><p>使用 Quick Check，为 <code class="docutils literal notranslate"><span class="pre">MonadHandle</span></code> monad 中的一个动作编写一个测试，观察它是否尝试向一个未打开的文件句柄写入。在 <code class="docutils literal notranslate"><span class="pre">safeHello</span></code> 下尝试。</p></li>
+<li><p>编写一个试图向已关闭句柄写入的动作。你的测试捕获到这个问题了吗？</p></li>
+<li><p>在表单编码的字符串中，相同的键可能出现数次，每个键具有或不具有对应的值，例如 <code class="docutils literal notranslate"><span class="pre">key&amp;key=1&amp;key=2</span></code> 。你会用什么类型来表示这类字符串中和键相关联的值？编写一个正确捕获所有信息的解析器。</p></li>
+</ol>
+</section>
+</section>
+</section>
+      </div>
+      <div class="bottomnav">
+      
+        <p>
+        «&#160;&#160;<a href="14.html">第 14 章：Monads</a>
+        &#160;&#160;::&#160;&#160;
+        <a class="uplink" href="../index.html">Contents</a>
+        &#160;&#160;::&#160;&#160;
+        <a href="16.html">第 16 章：使用Parsec</a>&#160;&#160;»
+        </p>
+
+      </div>
+
+    <div class="footer" role="contentinfo">
+        &#169; Copyright 2012, huangz1990.
+      Created using <a href="https://www.sphinx-doc.org/">Sphinx</a> 4.1.2.
+    </div>
+  </body>
+</html>
