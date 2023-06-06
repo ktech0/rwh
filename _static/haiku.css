@@ -33,7 +33,7 @@ body {
     line-height: 1.5;
     margin: auto;
     padding: 0px;
-    font-family: "DejaVu Sans", Arial, Helvetica, sans-serif;
+    font-family: "Noto Mono","Cascadia Mono","微软雅黑","DejaVu Sans", Arial, Helvetica, sans-serif;
     min-width: 59em;
     max-width: 70em;
     color: #333333;
@@ -321,6 +321,7 @@ pre {
     margin: 0 0 12px 0;
     padding: 0.8em;
     background-color: #f0f0f0;
+    font-family: "Noto Mono","Cascadia Mono","微软雅黑";
 }
 
 hr {
